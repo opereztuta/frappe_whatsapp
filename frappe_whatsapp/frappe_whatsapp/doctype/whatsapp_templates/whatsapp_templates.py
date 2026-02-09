@@ -3,6 +3,7 @@
 # Copyright (c) 2022, Shridhar Patil and contributors
 # For license information, please see license.txt
 import os
+import re
 import frappe
 import magic
 from frappe.model.document import Document
@@ -55,6 +56,8 @@ class WhatsAppTemplates(Document):
     """Create whatsapp template."""
 
     def validate(self):
+        # printing self for easier debugging in case of errors during validation
+        print("Validating WhatsApp Template:", self.as_dict())
         self.set_whatsapp_account()
         self._apply_marketing_unsubscribe_rules()
 
@@ -151,11 +154,11 @@ class WhatsAppTemplates(Document):
             r = make_post_request(
                 f"{self._url}/{self._version}/{self._app_id}/uploads",
                 headers=self._headers,
-                data=payload,
+                json=payload,
             )
         except Exception:
             integration = frappe.flags.integration_request
-            if not integration:
+            if integration is None:
                 frappe.throw(_("Upload failed due to server error."))
                 return
             res = integration.json().get("error", {})
@@ -212,7 +215,7 @@ class WhatsAppTemplates(Document):
             )
         except Exception:
             integration = frappe.flags.integration_request
-            if not integration:
+            if integration is None:
                 frappe.throw(_("Upload failed due to server error."))
                 return
             res = integration.json().get("error", {})
@@ -264,8 +267,11 @@ class WhatsAppTemplates(Document):
         }
 
         if self.sample_values:
+            placeholder_count = len(
+                set(re.findall(r"\{\{\d+\}\}", self.template)))
+            splits = (placeholder_count - 1) if placeholder_count > 1 else 0
             values = [v.strip() for v in self.sample_values.split(
-                ",") if v.strip()]
+                ",", maxsplit=splits) if v.strip()]
             body["example"] = {"body_text": [values]}
 
         data["components"].append(body)
@@ -310,11 +316,11 @@ class WhatsAppTemplates(Document):
                 (f"{self._url}/{self._version}/"
                  f"{self._business_id}/message_templates"),
                 headers=self._headers,
-                data=data,  # <-- send dict, not json.dumps
+                json=data,
             )
         except Exception:
             integration = frappe.flags.integration_request
-            if not integration:
+            if integration is None:
                 frappe.throw(
                     _("Template creation failed due to server error."))
                 return
@@ -357,8 +363,12 @@ class WhatsAppTemplates(Document):
         }
 
         if self.sample_values:
+            placeholder_count = len(
+                set(re.findall(r"\{\{\d+\}\}", self.template)))
+            splits = (placeholder_count - 1) if placeholder_count > 1 else 0
             values = [
-                v.strip() for v in self.sample_values.split(",") if v.strip()]
+                v.strip() for v in self.sample_values.split(
+                    ",", maxsplit=splits) if v.strip()]
             body["example"] = {"body_text": [values]}
 
         data["components"].append(body)
@@ -400,11 +410,11 @@ class WhatsAppTemplates(Document):
             make_post_request(
                 f"{self._url}/{self._version}/{self.id}",
                 headers=self._headers,
-                data=data,  # ✅ send dict
+                json=data,
             )
         except Exception:
             integration = frappe.flags.integration_request
-            if integration:
+            if integration is not None:
                 res = integration.json().get("error", {})
                 frappe.throw(
                     msg=res.get(
@@ -445,7 +455,7 @@ class WhatsAppTemplates(Document):
             return
         except Exception:
             integration = getattr(frappe.flags, "integration_request", None)
-            if not integration or not hasattr(integration, "json"):
+            if integration is None or not hasattr(integration, "json"):
                 # Fallback: re-raise or show generic error
                 frappe.throw(_("Failed to delete template on Meta."))
                 return
