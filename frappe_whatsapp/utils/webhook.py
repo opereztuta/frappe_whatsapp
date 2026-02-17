@@ -3,7 +3,7 @@ import frappe
 import json
 import requests
 from werkzeug.wrappers import Response
-from typing import cast
+from typing import cast, Any
 
 from frappe_whatsapp.utils import get_whatsapp_account
 from frappe_whatsapp.utils.routing import get_last_sender_app, \
@@ -281,7 +281,8 @@ def _process_incoming_message(
             "routed_app": last_app,
         }).insert(ignore_permissions=True)
 
-        # Check for opt-out / opt-in keywords if message contains text-like body
+        # Check for opt-out / opt-in keywords if message contains text-like
+        # body
         _handle_consent_keywords(
             body_text=body_text or "",
             contact_number=contact_number,
@@ -434,32 +435,86 @@ def update_template_status(data):
     )
 
 
+def _extract_status_error_fields(
+        status_payload: dict[str, Any]) -> dict[str, Any]:
+    """Map Meta status errors to WhatsApp Message fields."""
+    error_fields: dict[str, Any] = {
+        "status_error_code": None,
+        "status_error_title": None,
+        "status_error_message": None,
+        "status_error_details": None,
+        "status_error_href": None,
+        "status_error_payload": None,
+    }
+
+    errors = status_payload.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return error_fields
+
+    error_fields["status_error_payload"] = errors
+    first_error = next((err for err in errors if isinstance(err, dict)), None)
+    if not first_error:
+        return error_fields
+
+    code = first_error.get("code")
+    if code is not None:
+        error_fields["status_error_code"] = str(code)
+
+    for source_key, target_key in (
+            ("title", "status_error_title"),
+            ("message", "status_error_message"),
+            ("href", "status_error_href")):
+        value = first_error.get(source_key)
+        if value is not None:
+            error_fields[target_key] = str(value)
+
+    error_data = first_error.get("error_data")
+    if isinstance(error_data, dict):
+        details = error_data.get("details")
+        if details is not None:
+            error_fields["status_error_details"] = str(details)
+
+    return error_fields
+
+
 def update_message_status(data):
     """Update message status."""
+    print(f"[Webhook] update_message_status called with: {data}")
     statuses = data.get("statuses")
     if not statuses or not isinstance(statuses, list):
         return
 
-    first = statuses[0]
-    if not isinstance(first, dict):
-        return
-
-    msg_id = first.get("id")
-    status = first.get("status")
-    if not msg_id or not status:
-        return
-
-    conversation = (first.get("conversation") or {}).get("id")
-    name = frappe.db.get_value("WhatsApp Message", filters={"message_id": msg_id})
-    if not name:
-        return
-
     from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import WhatsAppMessage  # noqa
-    doc = cast(WhatsAppMessage, frappe.get_doc("WhatsApp Message", str(name)))
-    doc.status = status
-    if conversation:
-        doc.conversation_id = conversation
-    doc.save(ignore_permissions=True)
+
+    for status_payload in statuses:
+        if not isinstance(status_payload, dict):
+            continue
+
+        msg_id = status_payload.get("id")
+        status = status_payload.get("status")
+        if not msg_id or not status:
+            continue
+
+        conversation = (status_payload.get("conversation") or {}).get("id")
+        name = frappe.db.get_value(
+            "WhatsApp Message", filters={"message_id": msg_id})
+        if not name:
+            continue
+
+        doc = cast(
+            WhatsAppMessage,
+            frappe.get_doc("WhatsApp Message", str(name)))
+        doc.status = status
+        if conversation:
+            doc.conversation_id = conversation
+
+        error_fields = _extract_status_error_fields(status_payload)
+        for fieldname, value in error_fields.items():
+            if doc.meta.has_field(fieldname):
+                doc.set(fieldname, value)
+
+        doc.save(ignore_permissions=True)
+        frappe.db.commit()
 
 
 def download_and_attach_media(

@@ -56,7 +56,8 @@ class WhatsAppTemplates(Document):
     """Create whatsapp template."""
 
     def validate(self):
-        # printing self for easier debugging in case of errors during validation
+        # printing self for easier debugging in case of errors during
+        # validation
         print("Validating WhatsApp Template:", self.as_dict())
         self.set_whatsapp_account()
         self._apply_marketing_unsubscribe_rules()
@@ -531,6 +532,9 @@ def fetch() -> str:
         filters={"status": "Active"},
         fields=["name", "url", "version", "business_id"],
     )
+    print(
+        f"[Sync from Meta] Active WhatsApp Accounts found: "
+        f"{whatsapp_accounts}")
 
     for account in whatsapp_accounts:
         account_map = cast(Mapping[str, Any], account)
@@ -559,10 +563,12 @@ def fetch() -> str:
             )
 
             resp = _as_dict(raw)
+            print(f"Fetched templates for account {account_name}:", resp)
             templates = _as_list(resp.get("data"))
 
             for t in templates:
                 template = _as_dict(t)
+                print("Processing template:", template)
 
                 template_name = str(template.get("name") or "")
                 if not template_name:
