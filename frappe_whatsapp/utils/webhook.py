@@ -449,9 +449,16 @@ def _extract_status_error_fields(
 
     errors = status_payload.get("errors")
     if not isinstance(errors, list) or not errors:
+        # Some failed callbacks omit `errors`; keep the raw status payload
+        # so operators still have context for troubleshooting.
+        if str(status_payload.get("status") or "").lower() == "failed":
+            error_fields["status_error_payload"] = {
+                "status_payload": status_payload}
         return error_fields
 
-    error_fields["status_error_payload"] = errors
+    # Frappe JSON fields reject raw Python lists during document validation.
+    # Preserve the full Meta payload by wrapping the array in an object.
+    error_fields["status_error_payload"] = {"errors": errors}
     first_error = next((err for err in errors if isinstance(err, dict)), None)
     if not first_error:
         return error_fields

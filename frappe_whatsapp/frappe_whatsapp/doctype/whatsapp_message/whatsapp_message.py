@@ -90,7 +90,6 @@ class WhatsAppMessage(Document):
     # end: auto-generated types
 
     def validate(self):
-        print(f"Validating WhatsApp Message dict: {self.as_dict()}")
         self.set_whatsapp_account()
 
     def on_update(self):
