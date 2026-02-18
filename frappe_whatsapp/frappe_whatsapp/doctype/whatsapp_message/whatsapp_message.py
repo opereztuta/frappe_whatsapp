@@ -73,6 +73,12 @@ class WhatsAppMessage(Document):
         routed_app: DF.Link | None
         source_app: DF.Link | None
         status: DF.Data | None
+        status_error_code: DF.Data | None
+        status_error_details: DF.SmallText | None
+        status_error_href: DF.Data | None
+        status_error_message: DF.SmallText | None
+        status_error_payload: DF.JSON | None
+        status_error_title: DF.Data | None
         template: DF.Link | None
         template_header_parameters: DF.SmallText | None
         template_parameters: DF.SmallText | None
@@ -194,7 +200,11 @@ class WhatsAppMessage(Document):
     """Send whats app messages."""
     def before_insert(self):
         """Send message."""
+        print(f"Preparing to send WhatsApp Message: {self.as_dict()}")
         self.set_whatsapp_account()
+
+        if self.use_template and self.template:
+            self.message_type = "Template"
 
         # Consent + window checks only for messages not yet sent.
         # Docs created with message_id already set (e.g. from
@@ -370,7 +380,12 @@ class WhatsAppMessage(Document):
                 frappe.throw(f"Failed to send message {str(e)}")
         elif self.type == "Outgoing" and self.message_type == "Template" and \
                 not self.message_id:
-            self.send_template()
+            try:
+                self.send_template()
+                self.status = "Success"
+            except Exception as e:
+                self.status = "Failed"
+                frappe.throw(f"Failed to send template message {str(e)}")
 
         self.create_whatsapp_profile()
 
@@ -537,12 +552,14 @@ class WhatsAppMessage(Document):
             "content-type": "application/json",
         }
         try:
+            print(f"[WhatsApp Send] Payload: {json.dumps(data, indent=2)}")
             response = make_post_request(
                 (f"{whatsapp_account.url}/{whatsapp_account.version}"
                  f"/{whatsapp_account.phone_id}/messages"),
                 headers=headers,
                 data=json.dumps(data),
             )
+            print(f"[WhatsApp Send] Response: {response}")
 
             response_dict: dict[str, Any] = {}
             if response is None:

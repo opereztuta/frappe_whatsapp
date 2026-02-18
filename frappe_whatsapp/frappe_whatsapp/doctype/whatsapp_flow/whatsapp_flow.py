@@ -638,6 +638,7 @@ class WhatsAppFlow(Document):
             response.raise_for_status()
 
             data = response.json()
+            print("Fetched flow data for sync:", data)
 
             # Update local fields
             if data.get("status"):
