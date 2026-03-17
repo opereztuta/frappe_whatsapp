@@ -235,10 +235,9 @@ def serialize_incoming_message_for_forwarding(
     *,
     incoming_message_doc: WhatsAppMessage,
 ) -> dict[str, Any]:
-    if getattr(incoming_message_doc, "name", None) and hasattr(
-        incoming_message_doc, "reload"
-    ):
-        incoming_message_doc.reload()
+    reload_method = getattr(incoming_message_doc, "reload", None)
+    if getattr(incoming_message_doc, "name", None) and callable(reload_method):
+        reload_method()
 
     attach = _get_attach_value(incoming_message_doc=incoming_message_doc)
     attachment_file = _get_attachment_file(
@@ -253,6 +252,7 @@ def serialize_incoming_message_for_forwarding(
         "name": incoming_message_doc.name,
         "from": incoming_message_doc.get("from"),
         "to": incoming_message_doc.to,
+        "profile_name": incoming_message_doc.get("profile_name"),
         "whatsapp_account": incoming_message_doc.whatsapp_account,
         "content_type": incoming_message_doc.content_type,
         "message": incoming_message_doc.message,
