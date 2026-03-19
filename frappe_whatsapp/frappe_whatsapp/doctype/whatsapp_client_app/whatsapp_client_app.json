@@ -9,7 +9,8 @@
   "app_id",
   "enabled",
   "inbound_webhook_url",
-  "outbound_default_account"
+  "outbound_default_account",
+  "status_webhook_url"
  ],
  "fields": [
   {
@@ -34,12 +35,17 @@
    "fieldtype": "Link",
    "label": "outbound_default_account",
    "options": "WhatsApp Account"
+  },
+  {
+   "fieldname": "status_webhook_url",
+   "fieldtype": "Data",
+   "label": "status_webhook_url"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-01-21 16:01:08.805304",
+ "modified": "2026-03-19 15:00:13.929309",
  "modified_by": "Administrator",
  "module": "Frappe Whatsapp",
  "name": "WhatsApp Client App",
