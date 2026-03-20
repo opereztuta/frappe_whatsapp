@@ -69,6 +69,10 @@ export_python_type_annotations = True
 # before_install = "frappe_whatsapp.install.before_install"
 # after_install = "frappe_whatsapp.install.after_install"
 
+after_migrate = [
+    "frappe_whatsapp.utils.status_notifier.ensure_status_log_indexes",
+]
+
 # Uninstallation
 # ------------
 
@@ -121,14 +125,17 @@ scheduler_events = {
         "frappe_whatsapp.utils.trigger_whatsapp_notifications_all"
     ],
     "hourly": [
-        "frappe_whatsapp.utils.trigger_whatsapp_notifications_hourly"
+        "frappe_whatsapp.utils.trigger_whatsapp_notifications_hourly",
+        ("frappe_whatsapp.utils.status_notifier"
+         ".retry_failed_status_notifications"),
     ],
     "hourly_long": [
         "frappe_whatsapp.utils.trigger_whatsapp_notifications_hourly_long"
     ],
     "daily": [
         "frappe_whatsapp.utils.trigger_whatsapp_notifications_daily",
-        "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification.whatsapp_notification.trigger_notifications",
+        ("frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification"
+         ".whatsapp_notification.trigger_notifications"),
     ],
     "daily_long": [
         "frappe_whatsapp.utils.trigger_whatsapp_notifications_daily_long",
@@ -156,7 +163,8 @@ scheduler_events = {
 # ------------------------------
 #
 # override_whitelisted_methods = {
-#   "frappe.desk.doctype.event.event.get_events": "frappe_whatsapp.event.get_events"
+#   "frappe.desk.doctype.event.event.get_events": ("frappe_whatsapp."
+# "event.get_events")
 # }
 #
 # each overriding function accepts a `data` argument;
@@ -204,19 +212,39 @@ scheduler_events = {
 
 
 doc_events = {
+    "WhatsApp Message": {
+        # Status-notification subsystem: detect material status changes and
+        # enqueue async webhook deliveries to the originating client app.
+        "after_insert": (
+            "frappe_whatsapp.utils.status_notifier"
+            ".on_whatsapp_message_after_insert"
+        ),
+        "on_update": (
+            "frappe_whatsapp.utils.status_notifier"
+            ".on_whatsapp_message_on_update"
+        ),
+    },
     "*": {
-        "before_insert": "frappe_whatsapp.utils.run_server_script_for_doc_event",
-        "after_insert": "frappe_whatsapp.utils.run_server_script_for_doc_event",
-        "before_validate": "frappe_whatsapp.utils.run_server_script_for_doc_event",
+        "before_insert": ("frappe_whatsapp.utils."
+                          "run_server_script_for_doc_event"),
+        "after_insert": ("frappe_whatsapp.utils"
+                         ".run_server_script_for_doc_event"),
+        "before_validate": ("frappe_whatsapp.utils"
+                            ".run_server_script_for_doc_event"),
         "validate": "frappe_whatsapp.utils.run_server_script_for_doc_event",
         "on_update": "frappe_whatsapp.utils.run_server_script_for_doc_event",
-        "before_submit": "frappe_whatsapp.utils.run_server_script_for_doc_event",
+        "before_submit": ("frappe_whatsapp.utils."
+                          "run_server_script_for_doc_event"),
         "on_submit": "frappe_whatsapp.utils.run_server_script_for_doc_event",
-        "before_cancel": "frappe_whatsapp.utils.run_server_script_for_doc_event",
+        "before_cancel": ("frappe_whatsapp.utils."
+                          "run_server_script_for_doc_event"),
         "on_cancel": "frappe_whatsapp.utils.run_server_script_for_doc_event",
         "on_trash": "frappe_whatsapp.utils.run_server_script_for_doc_event",
-        "after_delete": "frappe_whatsapp.utils.run_server_script_for_doc_event",
-        "before_update_after_submit": "frappe_whatsapp.utils.run_server_script_for_doc_event",
-        "on_update_after_submit": "frappe_whatsapp.utils.run_server_script_for_doc_event"
+        "after_delete": ("frappe_whatsapp."
+                         "utils.run_server_script_for_doc_event"),
+        "before_update_after_submit": ("frappe_whatsapp.utils."
+                                       "run_server_script_for_doc_event"),
+        "on_update_after_submit": ("frappe_whatsapp.utils."
+                                   "run_server_script_for_doc_event")
     }
 }
