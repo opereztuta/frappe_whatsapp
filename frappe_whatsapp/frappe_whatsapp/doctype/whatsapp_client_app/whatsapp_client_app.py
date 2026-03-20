@@ -18,5 +18,6 @@ class WhatsAppClientApp(Document):
         enabled: DF.Check
         inbound_webhook_url: DF.Data | None
         outbound_default_account: DF.Link | None
+        status_webhook_url: DF.Data | None
     # end: auto-generated types
     pass
