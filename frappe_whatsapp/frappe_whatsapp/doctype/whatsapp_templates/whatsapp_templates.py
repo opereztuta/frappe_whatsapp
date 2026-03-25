@@ -528,6 +528,35 @@ def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _normalize_meta_language_code(value: Any) -> str:
+    """Normalize Meta language codes to the stored template format."""
+    return str(value or "").strip().replace("-", "_")
+
+
+def _resolve_language_link(value: Any) -> str:
+    """Resolve a Meta language code to the corresponding Language docname."""
+    language = str(value or "").strip()
+    if not language:
+        return ""
+
+    candidates = [
+        language,
+        language.replace("_", "-"),
+        language.replace("-", "_"),
+    ]
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+
+        if frappe.db.exists("Language", candidate):
+            return candidate
+
+    return ""
+
+
 def _get_integration_error() -> dict[str, Any]:
     integration = getattr(frappe.flags, "integration_request", None)
     if not integration or not hasattr(integration, "json"):
@@ -603,8 +632,11 @@ def fetch() -> str:
                     doc.actual_name = template_name
 
                 # status/language/id (these are simple Data fields)
+                meta_language = str(template.get("language") or "")
                 doc.status = str(template.get("status") or "")
-                doc.language_code = str(template.get("language") or "")
+                doc.language_code = _normalize_meta_language_code(
+                    meta_language)
+                doc.language = _resolve_language_link(meta_language)
                 doc.id = str(template.get("id") or "")
                 doc.whatsapp_account = account_name
 
