@@ -35,16 +35,19 @@ _COMPLIANCE_FIELDS = (
 # Regex matching actionable opt-out instructions in a template footer.
 #
 # Design rationale:
-#   • "STOP" alone is NOT matched — the word appears in many non-opt-out
-#     contexts (e.g. "Stop by our office for help", "we'll never stop caring").
-#     STOP is matched only when it immediately follows a recognised send verb
-#     (reply / text / send / type and their -ing forms), with at most three
-#     filler words in between.
+#   • Uppercase "STOP" is treated as a standalone opt-out keyword because
+#     Meta-approved multilingual footers commonly keep the keyword in English
+#     while translating the surrounding instruction text.
+#   • Normal prose like "Stop by our office for help" is still excluded from
+#     the standalone STOP path because that uses a case-sensitive token match.
+#   • Additional English heuristic matching remains for natural-language
+#     footers that do not use the exact uppercase STOP token.
 #   • "opt out" / "opt-out" are treated as inherently actionable in footer
 #     context; they are almost exclusively used to mean "remove yourself from
 #     this list".
 #   • "unsubscribe" is treated similarly — virtually always an instruction
 #     when it appears in a message footer.
+_OPT_OUT_STOP_TOKEN_RE = re.compile(r"\bSTOP\b")
 _OPT_OUT_FOOTER_RE = re.compile(
     r"""
     (?:
@@ -828,7 +831,7 @@ def _footer_looks_like_unsubscribe(
 ) -> bool:
     """Return True if *footer* clearly contains opt-out / unsubscribe text.
 
-    Three detection passes (any hit returns True):
+    Four detection passes (any hit returns True):
 
     1. Check against ``default_unsubscribe_text`` from Compliance Settings
        (case-insensitive substring match).
@@ -837,7 +840,10 @@ def _footer_looks_like_unsubscribe(
        Keyword matching mirrors ``check_opt_out_keyword()`` in consent.py:
        case normalisation first, then ``match_type``
        (Exact / Contains / Starts With).
-    3. Regex heuristic — accepts naturally-worded footers that contain
+    3. Standalone uppercase ``STOP`` token — handles Meta-approved
+       multilingual footers such as
+       "Responda STOP para cancelar o recebimento de comunicacoes."
+    4. Regex heuristic — accepts naturally-worded footers that contain
        recognised opt-out terms (stop, unsubscribe, opt-out / opt out) even
        when the footer does not match the exact configured text.  This handles
        Meta-approved footers like
@@ -884,7 +890,11 @@ def _footer_looks_like_unsubscribe(
     except Exception:
         pass
 
-    # Pass 3: regex heuristic — common opt-out terms in any wording
+    # Pass 3: standalone uppercase STOP keyword in multilingual instructions
+    if _OPT_OUT_STOP_TOKEN_RE.search(footer):
+        return True
+
+    # Pass 4: regex heuristic — common opt-out terms in any wording
     if _OPT_OUT_FOOTER_RE.search(footer):
         return True
 

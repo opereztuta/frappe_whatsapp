@@ -283,7 +283,7 @@ class TestComplianceSyncDefaults(FrappeTestCase):
         self.assertFalse(result)
 
     # ------------------------------------------------------------------
-    # Regex pass 3: naturally-worded opt-out footers
+    # Heuristic passes 3-4: STOP token + naturally-worded footers
     # ------------------------------------------------------------------
     def test_footer_with_stop_matches_via_regex(self):
         """Footer containing 'STOP' (no exact configured text, no keywords)
@@ -292,6 +292,18 @@ class TestComplianceSyncDefaults(FrappeTestCase):
         with patch(f"{_MOD}.get_opt_out_keywords", return_value=[]):
             result = _footer_looks_like_unsubscribe(
                 "You can opt out at any time by replying STOP.", settings)
+        self.assertTrue(result)
+
+    def test_footer_with_multilingual_stop_instruction_matches_via_token(self):
+        settings = _make_settings(default_unsubscribe_text="")
+        with patch(f"{_MOD}.get_opt_out_keywords", return_value=[]):
+            result = _footer_looks_like_unsubscribe(
+                (
+                    "Responda STOP para cancelar o recebimento de comunicacoes.\n"
+                    "Responde STOP para darte de baja."
+                ),
+                settings,
+            )
         self.assertTrue(result)
 
     def test_footer_with_unsubscribe_word_matches_via_regex(self):
@@ -317,8 +329,7 @@ class TestComplianceSyncDefaults(FrappeTestCase):
         self.assertFalse(result)
 
     def test_stop_in_non_opt_out_context_not_matched(self):
-        """'Stop by our office for help' must NOT match — bare STOP without
-        a preceding communication verb is not actionable opt-out language."""
+        """Title-case prose must not match the standalone uppercase STOP path."""
         settings = _make_settings(default_unsubscribe_text="")
         with patch(f"{_MOD}.get_opt_out_keywords", return_value=[]):
             result = _footer_looks_like_unsubscribe(
@@ -347,6 +358,31 @@ class TestComplianceSyncDefaults(FrappeTestCase):
         self.assertEqual(
             doc.unsubscribe_text,
             "You can opt out at any time by replying STOP.")
+
+    @patch(f"{_MOD}.get_opt_out_keywords", return_value=[])
+    @patch(f"{_MOD}.get_compliance_settings")
+    def test_derive_sync_detects_multilingual_footer_via_stop_token(
+        self, mock_settings, _mock_kw
+    ):
+        mock_settings.return_value = _make_settings(
+            default_unsubscribe_text="Reply STOP to unsubscribe")
+        doc = _make_doc(
+            category="MARKETING",
+            footer=(
+                "Responda STOP para cancelar o recebimento de comunicacoes.\n"
+                "Responde STOP para darte de baja."
+            ),
+        )
+        _derive_sync_compliance(doc, is_new=True)
+
+        self.assertEqual(doc.include_unsubscribe_instructions, 1)
+        self.assertEqual(
+            doc.unsubscribe_text,
+            (
+                "Responda STOP para cancelar o recebimento de comunicacoes.\n"
+                "Responde STOP para darte de baja."
+            ),
+        )
 
 
 # ===========================================================================

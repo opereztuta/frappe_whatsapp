@@ -672,10 +672,12 @@ def enforce_marketing_template_compliance(template) -> None:
        (same logic as sync-time ``_derive_sync_compliance``):
        a. ``settings.default_unsubscribe_text`` substring in footer.
        b. Enabled opt-out keyword rows matching the footer.
-       c. Regex heuristic: verb+STOP ("reply STOP", "replying STOP", …),
+       c. Standalone uppercase ``STOP`` token, which is common in
+          Meta-approved multilingual footers.
+       d. Regex heuristic: verb+STOP ("reply STOP", "replying STOP", ...),
           "opt out" / "opt-out", or "unsubscribe".
-          NOTE: bare "STOP" without a preceding communication verb is NOT
-          matched — "Stop by our office for help" must not pass.
+          NOTE: title-case prose like "Stop by our office for help" must not
+          pass.
     """
     if not template or getattr(template, "category", "") != "MARKETING":
         return
