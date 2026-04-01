@@ -85,6 +85,23 @@ class TestEnforceMarketingTemplateCompliance(FrappeTestCase):
         )
         enforce_marketing_template_compliance(t)  # must not raise
 
+    @patch(f"{_TEMPLATES_MOD}.get_opt_out_keywords", return_value=[])
+    @patch(f"{_CONSENT_MOD}.get_compliance_settings")
+    def test_multilingual_stop_footer_passes(
+        self, mock_settings, _mock_kw
+    ):
+        mock_settings.return_value = _make_compliance_settings()
+        t = _make_template(
+            category="MARKETING",
+            footer=(
+                "Responda STOP para cancelar o recebimento de comunicacoes.\n"
+                "Responde STOP para darte de baja."
+            ),
+            include_unsubscribe_instructions=0,
+            unsubscribe_text="",
+        )
+        enforce_marketing_template_compliance(t)  # must not raise
+
     # -------------------------------------------------------------------
     # Failure: STOP in a non-opt-out context (false-positive guard)
     # -------------------------------------------------------------------
@@ -94,8 +111,7 @@ class TestEnforceMarketingTemplateCompliance(FrappeTestCase):
         self, mock_settings, _mock_kw
     ):
         """'Stop by our office for help' must NOT pass.
-        Bare STOP without a preceding send verb is not actionable opt-out
-        wording."""
+        Title-case prose must not be treated as the STOP opt-out keyword."""
         mock_settings.return_value = _make_compliance_settings(
             default_unsubscribe_text="")
         t = _make_template(footer="Stop by our office for help")
