@@ -32,6 +32,7 @@ WhatsApp integration for Frappe/ERPNext. Use Meta's WhatsApp Cloud API directly 
 - **Bulk Messaging** - Send campaigns to recipient lists with variable substitution
 - **Webhook Support** - Real-time message delivery and status updates
 - **Media Support** - Send and receive images, documents, videos, and audio files
+- **Contact Blocking** - Block spam contacts locally and through Meta's Block Users API
 - **Sync from Meta** - Import and sync templates and flows from your Meta Business Account
 - **ERPNext Integration** - Native integration with Frappe/ERPNext DocTypes
 
@@ -208,6 +209,68 @@ doc.set("_data_list", [
 Messages received via webhook are automatically created as WhatsApp Message documents:
 
 ![Incoming Message](https://user-images.githubusercontent.com/11792643/211519625-a528abe2-ba24-46a4-bcbc-170f6b4e27fb.png)
+
+### Contact Blocking and Spam Protection
+
+You can block unwanted WhatsApp contacts from **WhatsApp Profiles** or from an
+incoming **WhatsApp Message**.
+
+**How it works:**
+- The app creates or updates a **WhatsApp Blocked Contact** record first.
+- The app then attempts to block the contact through Meta's Block Users API.
+- If Meta rejects the request, the local block remains active.
+- Locally blocked contacts are ignored before message creation, media download,
+  and third-party forwarding.
+
+Use **WhatsApp Profiles** as the main blocking workspace:
+1. Open the contact's **WhatsApp Profiles** record.
+2. Review the **Blocking** section for local and Meta sync status.
+3. Click **Block Contact** or **Unblock Contact**.
+4. If the profile has no WhatsApp Account, select the account in the dialog.
+
+When reviewing spam directly from a conversation, open the incoming
+**WhatsApp Message** and click **Block Sender**. This path resolves the sender
+number and WhatsApp Account from the message automatically.
+
+**Meta limitation:** Meta only allows blocking WhatsApp users who messaged your
+business in the last 24 hours, and business accounts cannot block other
+WhatsApp Business accounts. The local block still protects your Frappe site even
+when Meta sync fails.
+
+**Third-party API example:**
+
+Authenticated API users need permission to manage **WhatsApp Blocked Contact**
+records. Connected apps do not need direct access to Meta tokens.
+
+```http
+POST /api/method/frappe_whatsapp.frappe_whatsapp.api.blocking.block_contact
+```
+
+```json
+{
+  "message_name": "WAMSG-0001",
+  "reason": "Spam attachment",
+  "sync_meta": 1
+}
+```
+
+For profile-based integrations:
+
+```http
+POST /api/method/frappe_whatsapp.frappe_whatsapp.api.blocking.block_profile_contact
+```
+
+```json
+{
+  "profile_name": "WAPROF-0001",
+  "whatsapp_account": "Main WhatsApp",
+  "reason": "Repeated spam",
+  "sync_meta": 1
+}
+```
+
+`profile_name` is the **WhatsApp Profiles** document name, not necessarily the
+phone number shown on the profile.
 
 ## Multi-Account Support
 
