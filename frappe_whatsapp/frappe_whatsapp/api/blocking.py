@@ -10,6 +10,7 @@ from frappe_whatsapp.utils.blocking import (
     block_contact as _block_contact,
     list_local_blocked_contacts,
     list_meta_blocked_contacts,
+    normalize_block_number,
     unblock_contact as _unblock_contact,
 )
 
@@ -27,6 +28,14 @@ def _require_block_permission() -> None:
     ):
         frappe.throw(
             _("Not permitted to manage WhatsApp blocked contacts."),
+            frappe.PermissionError,
+        )
+
+
+def _require_block_read_permission() -> None:
+    if not frappe.has_permission(BLOCKED_CONTACT_DOCTYPE, "read"):
+        frappe.throw(
+            _("Not permitted to view WhatsApp blocked contacts."),
             frappe.PermissionError,
         )
 
@@ -59,6 +68,56 @@ def _resolve_from_message(
             _("Could not resolve contact number and WhatsApp Account "
               "from message."))
     return str(resolved_number), str(resolved_account), resolved_app
+
+
+def _resolve_from_profile(
+        *, profile_name: str,
+        whatsapp_account: str | None = None) -> tuple[str, str | None]:
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_profiles.whatsapp_profiles import WhatsAppProfiles  # noqa: E501
+
+    profile = cast(
+        WhatsAppProfiles,
+        frappe.get_doc("WhatsApp Profiles", profile_name),
+    )
+    number = str(profile.number or "")
+    account = whatsapp_account or cast(
+        str | None,
+        profile.get("whatsapp_account"),
+    )
+    if not number:
+        frappe.throw(_("WhatsApp Profile has no number."))
+    return number, account
+
+
+def _get_local_block_state(
+        *, contact_number: str, whatsapp_account: str) -> dict[str, Any]:
+    number = normalize_block_number(contact_number)
+    records = frappe.get_all(
+        BLOCKED_CONTACT_DOCTYPE,
+        filters={
+            "contact_number": number,
+            "whatsapp_account": whatsapp_account,
+        },
+        fields=[
+            "name",
+            "contact_number",
+            "whatsapp_account",
+            "is_blocked",
+            "meta_status",
+            "meta_wa_id",
+            "reason",
+            "blocked_at",
+            "unblocked_at",
+            "last_synced_at",
+            "last_error",
+        ],
+        limit=1,
+    )
+    record = records[0] if records else None
+    return {
+        "is_blocked": bool(record and record.get("is_blocked")),
+        "block_record": record,
+    }
 
 
 @frappe.whitelist()
@@ -141,3 +200,83 @@ def get_blocked_contacts(
             limit=int(limit or 100),
         )
     return {"local": local, "meta": meta}
+
+
+@frappe.whitelist()
+def get_profile_block_state(
+        profile_name: str,
+        whatsapp_account: str | None = None):
+    _require_block_read_permission()
+    number, account = _resolve_from_profile(
+        profile_name=profile_name,
+        whatsapp_account=whatsapp_account,
+    )
+    if not account:
+        return {
+            "profile": profile_name,
+            "contact_number": normalize_block_number(number),
+            "whatsapp_account": None,
+            "requires_whatsapp_account": True,
+            "is_blocked": False,
+            "block_record": None,
+        }
+
+    state = _get_local_block_state(
+        contact_number=number,
+        whatsapp_account=account,
+    )
+    return {
+        "profile": profile_name,
+        "contact_number": normalize_block_number(number),
+        "whatsapp_account": account,
+        "requires_whatsapp_account": False,
+        **state,
+    }
+
+
+@frappe.whitelist()
+def block_profile_contact(
+    profile_name: str,
+    whatsapp_account: str | None = None,
+    reason: str | None = None,
+    sync_meta: int | str | bool = 1,
+):
+    _require_block_permission()
+    number, account = _resolve_from_profile(
+        profile_name=profile_name,
+        whatsapp_account=whatsapp_account,
+    )
+    if not account:
+        frappe.throw(_("Select a WhatsApp Account before blocking."))
+    assert account is not None
+
+    return _block_contact(
+        whatsapp_account=account,
+        contact_number=number,
+        reason=reason,
+        sync_meta=_truthy(sync_meta),
+    )
+
+
+@frappe.whitelist()
+def unblock_profile_contact(
+    profile_name: str,
+    whatsapp_account: str | None = None,
+    reason: str | None = None,
+    sync_meta: int | str | bool = 1,
+):
+    _require_block_permission()
+    number, account = _resolve_from_profile(
+        profile_name=profile_name,
+        whatsapp_account=whatsapp_account,
+    )
+    if not account:
+        frappe.throw(_("Select a WhatsApp Account before unblocking."))
+    assert account is not None
+
+    return _unblock_contact(
+        whatsapp_account=account,
+        contact_number=number,
+        reason=reason,
+        sync_meta=_truthy(sync_meta),
+    )
