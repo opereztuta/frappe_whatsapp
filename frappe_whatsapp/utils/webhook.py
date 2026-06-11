@@ -10,6 +10,7 @@ from werkzeug.wrappers import Response
 from typing import cast, Any
 
 from frappe_whatsapp.utils import get_whatsapp_account
+from frappe_whatsapp.utils.blocking import is_contact_blocked
 from frappe_whatsapp.utils.routing import resolve_incoming_routed_app, \
     forward_incoming_to_app_async
 from frappe_whatsapp.utils.consent import (
@@ -359,6 +360,12 @@ def _process_incoming_message(
     contact_number = message.get("from")
     if not contact_number:
         return
+
+    if is_contact_blocked(
+            whatsapp_account=str(whatsapp_account.name),
+            contact_number=contact_number):
+        return
+
     routed_app = resolve_incoming_routed_app(
         whatsapp_account=str(whatsapp_account.name),
         contact_number=contact_number
@@ -855,6 +862,17 @@ def download_and_attach_media(
         whatsapp_account = cast(
             WhatsAppAccount,
             frappe.get_doc("WhatsApp Account", whatsapp_account_name))
+
+        contact_number = frappe.db.get_value(
+            "WhatsApp Message",
+            message_docname,
+            "from",
+        )
+        if is_contact_blocked(
+                whatsapp_account=whatsapp_account_name,
+                contact_number=str(contact_number or "")):
+            return
+
         token = whatsapp_account.get_password("token")
         base_url = f"{whatsapp_account.url}/{whatsapp_account.version}/"
 

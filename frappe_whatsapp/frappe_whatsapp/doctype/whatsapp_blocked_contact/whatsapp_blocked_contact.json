@@ -1,0 +1,159 @@
+{
+ "actions": [],
+ "autoname": "format:{contact_number}-{whatsapp_account}",
+ "creation": "2026-06-11 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "whatsapp_account",
+  "contact_number",
+  "is_blocked",
+  "meta_status",
+  "section_break_source",
+  "source_app",
+  "source_message",
+  "reason",
+  "section_break_meta",
+  "meta_input",
+  "meta_wa_id",
+  "last_error",
+  "last_error_payload",
+  "blocked_at",
+  "unblocked_at",
+  "last_synced_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "whatsapp_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "WhatsApp Account",
+   "options": "WhatsApp Account",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "contact_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Contact Number",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "is_blocked",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Blocked Locally"
+  },
+  {
+   "default": "Not Synced",
+   "fieldname": "meta_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Meta Status",
+   "options": "Not Synced\nBlocked\nUnblocked\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_source",
+   "fieldtype": "Section Break",
+   "label": "Source"
+  },
+  {
+   "fieldname": "source_app",
+   "fieldtype": "Link",
+   "label": "Source App",
+   "options": "WhatsApp Client App"
+  },
+  {
+   "fieldname": "source_message",
+   "fieldtype": "Link",
+   "label": "Source Message",
+   "options": "WhatsApp Message"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "section_break_meta",
+   "fieldtype": "Section Break",
+   "label": "Meta Sync"
+  },
+  {
+   "fieldname": "meta_input",
+   "fieldtype": "Data",
+   "label": "Meta Input",
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_wa_id",
+   "fieldtype": "Data",
+   "label": "Meta WA ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_error_payload",
+   "fieldtype": "JSON",
+   "label": "Last Error Payload",
+   "read_only": 1
+  },
+  {
+   "fieldname": "blocked_at",
+   "fieldtype": "Datetime",
+   "label": "Blocked At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "unblocked_at",
+   "fieldtype": "Datetime",
+   "label": "Unblocked At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_synced_at",
+   "fieldtype": "Datetime",
+   "label": "Last Synced At",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-06-11 11:57:51.751048",
+ "modified_by": "Administrator",
+ "module": "Frappe Whatsapp",
+ "name": "WhatsApp Blocked Contact",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

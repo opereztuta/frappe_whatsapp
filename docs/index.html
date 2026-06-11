@@ -506,6 +506,7 @@
                 <ul>
                     <li><a href="#installation">Installation</a></li>
                     <li><a href="#configuration">Configuration</a></li>
+                    <li><a href="#contact-blocking">Blocking</a></li>
                     <li><a href="#notifications">Notifications</a></li>
                     <li><a href="#bulk-messaging">Bulk Messaging</a></li>
                     <li><a href="#whatsapp-flows">Flows</a></li>
@@ -621,6 +622,13 @@
                         Sync from Meta
                     </h3>
                     <p>Import and synchronize templates and flows from your Meta Business Account.</p>
+                </div>
+                <div class="feature">
+                    <h3>
+                        <span class="feature-icon">🛡️</span>
+                        Contact Blocking
+                    </h3>
+                    <p>Block spam contacts locally and through Meta before media is downloaded or forwarded to client apps.</p>
                 </div>
             </div>
         </section>
@@ -759,6 +767,67 @@
             <div class="warning-box">
                 <p><strong>Important:</strong> Ensure your site is accessible over HTTPS. WhatsApp requires SSL for webhook endpoints.</p>
             </div>
+        </section>
+
+        <!-- Contact Blocking Section -->
+        <section id="contact-blocking" class="content-section">
+            <h2>Contact Blocking and Spam Protection</h2>
+            <p>Use contact blocking to stop unwanted WhatsApp senders from reaching your operators and connected client apps. A local block is always created first, then the app attempts to sync the block to Meta's Block Users API.</p>
+
+            <h3>What Blocking Does</h3>
+            <ul>
+                <li>Creates a <strong>WhatsApp Blocked Contact</strong> record for the selected WhatsApp Account and phone number.</li>
+                <li>Attempts to block the sender through Meta using the account's token and phone number ID.</li>
+                <li>Skips new inbound messages from locally blocked contacts before message creation, media download, and third-party forwarding.</li>
+                <li>Re-checks the local block list before queued media download jobs fetch bytes from Meta.</li>
+            </ul>
+
+            <div class="warning-box">
+                <p><strong>Meta limitation:</strong> Meta only allows blocking users who messaged your business in the last 24 hours. You also cannot block another WhatsApp Business account. Local blocking still protects this Frappe site if Meta sync fails.</p>
+            </div>
+
+            <h3>Blocking from WhatsApp Profiles</h3>
+            <p>The recommended UI for managing blocked contacts is <strong>WhatsApp Profiles</strong>.</p>
+            <ol>
+                <li>Open the sender's <strong>WhatsApp Profiles</strong> record.</li>
+                <li>Review the <strong>Blocking</strong> section for current local and Meta status.</li>
+                <li>Click <strong>Block Contact</strong> or <strong>Unblock Contact</strong>.</li>
+                <li>Enter a reason. If the profile has no WhatsApp Account, select the account in the dialog.</li>
+            </ol>
+
+            <p>The <strong>View Block Record</strong> button opens the underlying <strong>WhatsApp Blocked Contact</strong> document, where administrators can review the Meta sync status, last error, and timestamps.</p>
+
+            <h3>Blocking from Incoming Messages</h3>
+            <p>When spam is discovered from a message, open the incoming <strong>WhatsApp Message</strong> and click <strong>Block Sender</strong>. This path resolves the sender number and WhatsApp Account from the message automatically.</p>
+
+            <h3>Third-Party Systems</h3>
+            <p>Connected systems such as CRMs can use authenticated Frappe API calls to block or unblock contacts without receiving Meta tokens directly. The API user needs permission to manage <strong>WhatsApp Blocked Contact</strong> records. Passing a <code>message_name</code> is the safest option when the CRM is acting on an inbound message that it received from this app.</p>
+
+            <div class="code-block">
+                <button class="copy-button" onclick="copyCode(this)">Copy</button>
+                <pre><code>POST /api/method/frappe_whatsapp.frappe_whatsapp.api.blocking.block_contact
+
+{
+    "message_name": "WAMSG-0001",
+    "reason": "Spam attachment",
+    "sync_meta": 1
+}</code></pre>
+            </div>
+
+            <p>For profile-based integrations, call the profile wrapper and provide a WhatsApp Account when the profile does not already have one:</p>
+
+            <div class="code-block">
+                <button class="copy-button" onclick="copyCode(this)">Copy</button>
+                <pre><code>POST /api/method/frappe_whatsapp.frappe_whatsapp.api.blocking.block_profile_contact
+
+{
+    "profile_name": "WAPROF-0001",
+    "whatsapp_account": "Main WhatsApp",
+    "reason": "Repeated spam",
+    "sync_meta": 1
+}</code></pre>
+            </div>
+            <p><code>profile_name</code> is the <strong>WhatsApp Profiles</strong> document name, not necessarily the phone number shown on the profile.</p>
         </section>
 
         <!-- WhatsApp Notifications Section -->
@@ -1334,6 +1403,100 @@ message.insert()</code></pre>
                     <span class="endpoint-url">/api/method/frappe_whatsapp.webhook</span>
                 </div>
                 <p>Webhook endpoint for receiving WhatsApp messages and status updates. This is automatically handled by the app.</p>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method-badge method-post">POST</span>
+                    <span class="endpoint-url">/api/method/frappe_whatsapp.frappe_whatsapp.api.blocking.block_contact</span>
+                </div>
+                <p>Block a WhatsApp sender locally and best-effort at Meta. Use <code>message_name</code> when blocking from an inbound message.</p>
+                <h4>Request Body</h4>
+                <div class="code-block">
+                    <pre><code>{
+    "message_name": "WAMSG-0001",
+    "reason": "Spam attachment",
+    "sync_meta": 1
+}</code></pre>
+                </div>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method-badge method-post">POST</span>
+                    <span class="endpoint-url">/api/method/frappe_whatsapp.frappe_whatsapp.api.blocking.unblock_contact</span>
+                </div>
+                <p>Unblock a WhatsApp contact locally and best-effort at Meta.</p>
+                <h4>Request Body</h4>
+                <div class="code-block">
+                    <pre><code>{
+    "contact_number": "+15551234567",
+    "whatsapp_account": "Main WhatsApp",
+    "reason": "Reviewed as safe",
+    "sync_meta": 1
+}</code></pre>
+                </div>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method-badge method-get">GET</span>
+                    <span class="endpoint-url">/api/method/frappe_whatsapp.frappe_whatsapp.api.blocking.get_profile_block_state</span>
+                </div>
+                <p>Read the local block state for a WhatsApp Profiles record. This endpoint is used by the profile UI.</p>
+                <h4>Query Parameters</h4>
+                <ul>
+                    <li><code>profile_name</code> - WhatsApp Profiles document name.</li>
+                    <li><code>whatsapp_account</code> - Optional account override when the profile has no account.</li>
+                </ul>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method-badge method-post">POST</span>
+                    <span class="endpoint-url">/api/method/frappe_whatsapp.frappe_whatsapp.api.blocking.block_profile_contact</span>
+                </div>
+                <p>Block the phone number on a WhatsApp Profiles record.</p>
+                <h4>Request Body</h4>
+                <div class="code-block">
+                    <pre><code>{
+    "profile_name": "WAPROF-0001",
+    "whatsapp_account": "Main WhatsApp",
+    "reason": "Repeated spam",
+    "sync_meta": 1
+}</code></pre>
+                </div>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method-badge method-post">POST</span>
+                    <span class="endpoint-url">/api/method/frappe_whatsapp.frappe_whatsapp.api.blocking.unblock_profile_contact</span>
+                </div>
+                <p>Unblock the phone number on a WhatsApp Profiles record.</p>
+                <h4>Request Body</h4>
+                <div class="code-block">
+                    <pre><code>{
+    "profile_name": "WAPROF-0001",
+    "whatsapp_account": "Main WhatsApp",
+    "reason": "Reviewed as safe",
+    "sync_meta": 1
+}</code></pre>
+                </div>
+            </div>
+
+            <div class="endpoint">
+                <div class="endpoint-header">
+                    <span class="method-badge method-get">GET</span>
+                    <span class="endpoint-url">/api/method/frappe_whatsapp.frappe_whatsapp.api.blocking.get_blocked_contacts</span>
+                </div>
+                <p>List locally blocked contacts, with optional Meta blocked-user lookup for a specific WhatsApp Account.</p>
+                <h4>Query Parameters</h4>
+                <ul>
+                    <li><code>whatsapp_account</code> - Optional account filter. Required when <code>sync_meta</code> is enabled.</li>
+                    <li><code>sync_meta</code> - Set to <code>1</code> to include Meta's blocked-user list.</li>
+                    <li><code>limit</code> - Maximum records to return.</li>
+                </ul>
             </div>
         </section>
 

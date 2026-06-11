@@ -28,6 +28,8 @@
   "do_not_contact_section",
   "do_not_contact",
   "do_not_contact_reason",
+  "blocking_section",
+  "blocking_status_html",
   "category_consents_section",
   "category_consents",
   "compliance_metadata_section",
@@ -167,6 +169,16 @@
    "fieldname": "do_not_contact_reason",
    "fieldtype": "Small Text",
    "label": "Do Not Contact Reason"
+  },
+  {
+   "fieldname": "blocking_section",
+   "fieldtype": "Section Break",
+   "label": "Blocking"
+  },
+  {
+   "fieldname": "blocking_status_html",
+   "fieldtype": "HTML",
+   "label": "Blocking Status"
   },
   {
    "fieldname": "compliance_metadata_section",
