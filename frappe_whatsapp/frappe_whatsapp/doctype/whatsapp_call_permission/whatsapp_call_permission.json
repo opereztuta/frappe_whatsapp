@@ -1,0 +1,113 @@
+{
+ "actions": [],
+ "autoname": "format:{phone_number}-{whatsapp_account}",
+ "creation": "2026-07-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "whatsapp_account",
+  "phone_number",
+  "permission_status",
+  "is_permanent",
+  "expires_at",
+  "response_source",
+  "last_checked_at",
+  "last_requested_at",
+  "last_request_message",
+  "raw_meta_state"
+ ],
+ "fields": [
+  {
+   "fieldname": "whatsapp_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "WhatsApp Account",
+   "options": "WhatsApp Account",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "phone_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Phone Number",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "Unknown",
+   "fieldname": "permission_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Permission Status",
+   "options": "No Permission\nTemporary\nPermanent\nRejected\nExpired\nUnknown"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_permanent",
+   "fieldtype": "Check",
+   "label": "Permanent"
+  },
+  {
+   "fieldname": "expires_at",
+   "fieldtype": "Datetime",
+   "label": "Expires At"
+  },
+  {
+   "fieldname": "response_source",
+   "fieldtype": "Data",
+   "label": "Response Source"
+  },
+  {
+   "fieldname": "last_checked_at",
+   "fieldtype": "Datetime",
+   "label": "Last Checked At"
+  },
+  {
+   "fieldname": "last_requested_at",
+   "fieldtype": "Datetime",
+   "label": "Last Requested At"
+  },
+  {
+   "fieldname": "last_request_message",
+   "fieldtype": "Link",
+   "label": "Last Request Message",
+   "options": "WhatsApp Message"
+  },
+  {
+   "fieldname": "raw_meta_state",
+   "fieldtype": "JSON",
+   "label": "Raw Meta State"
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-07-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Frappe Whatsapp",
+ "name": "WhatsApp Call Permission",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "WhatsApp Chat Agent"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -113,6 +113,7 @@ class TestRouting(FrappeTestCase):
         payload = json.loads(mock_make_post_request.call_args.kwargs["data"])
         self.assertEqual(payload["event"], "whatsapp.incoming")
         self.assertEqual(payload["message"]["profile_name"], "Jane Sender")
+        self.assertEqual(payload["message"]["whatsapp_account"], "Test Account")
 
     def test_resolve_incoming_routed_app_seeds_default_account_route(self):
         app = self._create_client_app()

@@ -148,6 +148,7 @@ def get_whatsapp_account(
         if account_name:
             return frappe.get_doc(
                 "WhatsApp Account", str(account_name))
+        return None
 
     account_field_type = ('is_default_incoming'
                           if account_type == 'incoming' else

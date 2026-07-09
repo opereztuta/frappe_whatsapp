@@ -1,0 +1,125 @@
+{
+ "actions": [],
+ "creation": "2026-07-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "call_permission_template",
+  "ami_section",
+  "ami_host",
+  "ami_port",
+  "ami_username",
+  "ami_password",
+  "ami_use_tls",
+  "originate_timeout",
+  "routing_section",
+  "agent_channel_template",
+  "destination_context",
+  "destination_number_template"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "description": "Approved WhatsApp template containing the CALL_PERMISSION_REQUEST component.",
+   "fieldname": "call_permission_template",
+   "fieldtype": "Link",
+   "label": "Call Permission Template",
+   "options": "WhatsApp Templates"
+  },
+  {
+   "fieldname": "ami_section",
+   "fieldtype": "Section Break",
+   "label": "Asterisk Manager Interface"
+  },
+  {
+   "fieldname": "ami_host",
+   "fieldtype": "Data",
+   "label": "AMI Host"
+  },
+  {
+   "default": "5038",
+   "fieldname": "ami_port",
+   "fieldtype": "Int",
+   "label": "AMI Port"
+  },
+  {
+   "fieldname": "ami_username",
+   "fieldtype": "Data",
+   "label": "AMI Username"
+  },
+  {
+   "fieldname": "ami_password",
+   "fieldtype": "Password",
+   "label": "AMI Password"
+  },
+  {
+   "default": "0",
+   "fieldname": "ami_use_tls",
+   "fieldtype": "Check",
+   "label": "Use TLS for AMI"
+  },
+  {
+   "default": "30",
+   "description": "How long Asterisk should wait for the agent leg to answer, in seconds.",
+   "fieldname": "originate_timeout",
+   "fieldtype": "Int",
+   "label": "Originate Timeout"
+  },
+  {
+   "fieldname": "routing_section",
+   "fieldtype": "Section Break",
+   "label": "Dial Routing"
+  },
+  {
+   "default": "Local/{extension}@from-internal",
+   "description": "AMI Channel template for the agent leg. Supports {extension}, {number}, and {e164}.",
+   "fieldname": "agent_channel_template",
+   "fieldtype": "Data",
+   "label": "Agent Channel Template"
+  },
+  {
+   "default": "from-internal",
+   "description": "Dialplan context for the WhatsApp destination leg.",
+   "fieldname": "destination_context",
+   "fieldtype": "Data",
+   "label": "Destination Context"
+  },
+  {
+   "default": "{number}",
+   "description": "Destination number template. Supports {number} without '+', {e164} with '+', and {extension}.",
+   "fieldname": "destination_number_template",
+   "fieldtype": "Data",
+   "label": "Destination Number Template"
+  }
+ ],
+ "grid_page_length": 50,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-07-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Frappe Whatsapp",
+ "name": "WhatsApp Calling Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

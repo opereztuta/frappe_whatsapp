@@ -1,0 +1,144 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-07-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "contact",
+  "phone_number",
+  "whatsapp_account",
+  "agent_user",
+  "agent_extension",
+  "permission_request_message",
+  "ami_action_id",
+  "requested_at",
+  "permission_responded_at",
+  "pbx_queued_at",
+  "cancelled_at",
+  "failure_reason",
+  "last_error_payload"
+ ],
+ "fields": [
+  {
+   "default": "Permission Requested",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Permission Requested\nPermission Accepted\nPermission Rejected\nPBX Queued\nFailed\nCancelled"
+  },
+  {
+   "description": "Optional external/contact document name, such as WhatsApp Contact.",
+   "fieldname": "contact",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Contact"
+  },
+  {
+   "fieldname": "phone_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Phone Number",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "whatsapp_account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "WhatsApp Account",
+   "options": "WhatsApp Account",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "agent_user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Agent User",
+   "options": "User"
+  },
+  {
+   "fieldname": "agent_extension",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Agent Extension"
+  },
+  {
+   "fieldname": "permission_request_message",
+   "fieldtype": "Link",
+   "label": "Permission Request Message",
+   "options": "WhatsApp Message"
+  },
+  {
+   "fieldname": "ami_action_id",
+   "fieldtype": "Data",
+   "label": "AMI Action ID"
+  },
+  {
+   "fieldname": "requested_at",
+   "fieldtype": "Datetime",
+   "label": "Requested At"
+  },
+  {
+   "fieldname": "permission_responded_at",
+   "fieldtype": "Datetime",
+   "label": "Permission Responded At"
+  },
+  {
+   "fieldname": "pbx_queued_at",
+   "fieldtype": "Datetime",
+   "label": "PBX Queued At"
+  },
+  {
+   "fieldname": "cancelled_at",
+   "fieldtype": "Datetime",
+   "label": "Cancelled At"
+  },
+  {
+   "fieldname": "failure_reason",
+   "fieldtype": "Small Text",
+   "label": "Failure Reason"
+  },
+  {
+   "fieldname": "last_error_payload",
+   "fieldtype": "JSON",
+   "label": "Last Error Payload"
+  }
+ ],
+ "grid_page_length": 50,
+ "links": [],
+ "modified": "2026-07-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Frappe Whatsapp",
+ "name": "WhatsApp Call",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "WhatsApp Chat Agent"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

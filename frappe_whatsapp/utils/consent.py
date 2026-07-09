@@ -734,7 +734,10 @@ def enforce_template_send_rules(
             )
         )
 
-    if bool(getattr(template, "is_consent_request", 0)):
+    if (
+        bool(getattr(template, "is_consent_request", 0))
+        or bool(getattr(template, "is_call_permission_request", 0))
+    ):
         return
 
     requires_opt_in = bool(getattr(template, "requires_opt_in", 0))

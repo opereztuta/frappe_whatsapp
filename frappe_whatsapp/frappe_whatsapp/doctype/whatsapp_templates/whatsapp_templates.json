@@ -34,6 +34,7 @@
   "required_consent_category",
   "requires_opt_in",
   "is_consent_request",
+  "is_call_permission_request",
   "include_unsubscribe_instructions",
   "unsubscribe_text",
   "is_transactional",
@@ -219,6 +220,13 @@
    "fieldname": "is_consent_request",
    "fieldtype": "Check",
    "label": "Is Consent Request"
+  },
+  {
+   "default": "0",
+   "description": "Template contains Meta's CALL_PERMISSION_REQUEST component and can request WhatsApp call permission.",
+   "fieldname": "is_call_permission_request",
+   "fieldtype": "Check",
+   "label": "Is Call Permission Request"
   },
   {
    "default": "0",

@@ -57,6 +57,7 @@ def _make_doc(**kwargs):
         include_unsubscribe_instructions=0,
         unsubscribe_text="",
         is_consent_request=0,
+        is_call_permission_request=0,
         required_consent_category=None,
     )
     defaults.update(kwargs)
@@ -156,6 +157,26 @@ class TestComplianceSyncDefaults(FrappeTestCase):
         _derive_sync_compliance(doc, is_new=True)
 
         self.assertEqual(doc.is_consent_request, 1)
+        self.assertEqual(doc.requires_opt_in, 0)
+        self.assertIsNone(doc.required_consent_category)
+        self.assertEqual(doc.compliance_auto_managed, 1)
+
+    @patch(f"{_MOD}.get_opt_out_keywords", return_value=[])
+    @patch(f"{_MOD}.get_compliance_settings")
+    def test_call_permission_request_bootstraps_without_consent_flag(
+        self, mock_settings, _mock_kw
+    ):
+        mock_settings.return_value = _make_settings()
+        doc = _make_doc(
+            actual_name="call_permission_request",
+            template_name="call_permission_request",
+            category="MARKETING",
+            is_call_permission_request=1,
+        )
+        _derive_sync_compliance(doc, is_new=True)
+
+        self.assertEqual(doc.is_call_permission_request, 1)
+        self.assertEqual(doc.is_consent_request, 0)
         self.assertEqual(doc.requires_opt_in, 0)
         self.assertIsNone(doc.required_consent_category)
         self.assertEqual(doc.compliance_auto_managed, 1)
@@ -612,6 +633,7 @@ _FIELD_DEFAULT: dict = {
     "include_unsubscribe_instructions": 0,
     "unsubscribe_text": "",
     "is_consent_request": 0,
+    "is_call_permission_request": 0,
     "required_consent_category": None,
 }
 
@@ -621,6 +643,7 @@ _FIELD_CHANGED: dict = {
     "include_unsubscribe_instructions": 1,
     "unsubscribe_text": "Reply STOP",
     "is_consent_request": 1,
+    "is_call_permission_request": 1,
     "required_consent_category": "Marketing",
 }
 
