@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import requests
+from frappe.utils import cint
 from frappe.utils.password import get_decrypted_password as \
     _get_decrypted_password
 from werkzeug.wrappers import Response
@@ -312,7 +313,22 @@ def process_webhook_payload(data: dict):
         None,
     )
 
-    whatsapp_account = get_whatsapp_account(phone_id) if phone_id else None
+    if phone_id:
+        whatsapp_account = get_whatsapp_account(phone_id)
+        if not whatsapp_account:
+            frappe.log_error(
+                title="WhatsApp webhook unknown phone number ID",
+                message=(
+                    "WhatsApp webhook ignored: phone_number_id "
+                    f"'{phone_id}' does not match any configured "
+                    "WhatsApp Account. Add an active WhatsApp Account for "
+                    "this phone ID before processing inbound messages."
+                ),
+            )
+            return
+    else:
+        whatsapp_account = get_whatsapp_account(account_type="incoming")
+
     if not whatsapp_account:
         return
 
@@ -590,6 +606,42 @@ def _handle_interactive(
         routed_app, reply_to_message_id, is_reply):
     interactive = message.get("interactive") or {}
     interactive_type = interactive.get("type")
+
+    if interactive_type == "call_permission_reply":
+        permission_reply = interactive.get("call_permission_reply") or {}
+        response = str(permission_reply.get("response") or "").lower()
+        summary_message = (
+            "Call permission accepted"
+            if response == "accept"
+            else "Call permission rejected"
+        )
+        doc = frappe.get_doc({
+            "doctype": "WhatsApp Message",
+            "type": "Incoming",
+            "from": message.get("from"),
+            "message": summary_message,
+            "message_id": message.get("id"),
+            "reply_to_message_id": reply_to_message_id,
+            "is_reply": is_reply,
+            "content_type": "button",
+            "profile_name": sender_profile_name,
+            "whatsapp_account": whatsapp_account.name,
+            "routed_app": routed_app,
+        }).insert(ignore_permissions=True)
+
+        from frappe_whatsapp.utils.calling import handle_call_permission_reply
+        handle_call_permission_reply(
+            contact_number=str(message.get("from") or ""),
+            whatsapp_account_name=str(whatsapp_account.name),
+            response=response,
+            is_permanent=cint(permission_reply.get("is_permanent")) == 1,
+            expiration_timestamp=permission_reply.get(
+                "expiration_timestamp"),
+            response_source=permission_reply.get("response_source"),
+            context_message_id=reply_to_message_id,
+            message_doc_name=str(doc.name),
+        )
+        return
 
     # button/list
     if interactive_type in ("button_reply", "list_reply"):

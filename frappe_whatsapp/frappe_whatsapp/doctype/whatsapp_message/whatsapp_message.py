@@ -178,6 +178,7 @@ class WhatsAppMessage(Document):
         is_transactional = False
         consent_category: str | None = None
         is_consent_request = bool(self.is_opt_in_request)
+        is_call_permission_request = False
         if self.template:
             is_transactional = bool(
                 frappe.db.get_value(
@@ -201,18 +202,28 @@ class WhatsAppMessage(Document):
                     "is_consent_request",
                 )
             ) or is_consent_request
+            is_call_permission_request = bool(
+                frappe.db.get_value(
+                    "WhatsApp Templates",
+                    self.template,
+                    "is_call_permission_request",
+                )
+            )
 
-        if is_consent_request:
+        if is_consent_request or is_call_permission_request:
             # Consent request templates should not depend on prior category
             # consent and should be traceable on the message record.
             consent_category = None
+        if is_consent_request:
             self.is_opt_in_request = 1
 
         result = verify_consent_for_send(
             str(self.to or ""),
             consent_category=consent_category,
             is_transactional=is_transactional,
-            is_consent_request=is_consent_request,
+            is_consent_request=(
+                is_consent_request or is_call_permission_request
+            ),
             service_window_active=service_window_active,
         )
 

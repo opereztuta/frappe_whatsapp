@@ -34,6 +34,7 @@
   "required_consent_category",
   "requires_opt_in",
   "is_consent_request",
+  "is_call_permission_request",
   "include_unsubscribe_instructions",
   "unsubscribe_text",
   "is_transactional",
@@ -222,6 +223,13 @@
   },
   {
    "default": "0",
+   "description": "Template contains Meta's CALL_PERMISSION_REQUEST component and can request WhatsApp call permission.",
+   "fieldname": "is_call_permission_request",
+   "fieldtype": "Check",
+   "label": "Is Call Permission Request"
+  },
+  {
+   "default": "0",
    "description": "Compliance fields were last set by auto-sync. Cleared when operator manually edits any compliance field.",
    "fieldname": "compliance_auto_managed",
    "fieldtype": "Check",
@@ -232,11 +240,11 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-03-25 17:29:32.021989",
+ "modified": "2026-07-10 20:25:02.443718",
  "modified_by": "Administrator",
  "module": "Frappe Whatsapp",
  "name": "WhatsApp Templates",
- "naming_rule": "Expression",
+ "naming_rule": "Expression (old style)",
  "owner": "Administrator",
  "permissions": [
   {

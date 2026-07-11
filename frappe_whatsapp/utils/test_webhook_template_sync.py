@@ -37,6 +37,7 @@ from frappe_whatsapp.utils.webhook import (
     process_webhook_payload,
     update_status,
 )
+from frappe_whatsapp.utils import get_whatsapp_account
 
 # ---------------------------------------------------------------------------
 # Shared constants
@@ -44,6 +45,22 @@ from frappe_whatsapp.utils.webhook import (
 
 _WABA_ID = "123456789"
 _UNKNOWN_WABA_ID = "evil-unknown-999"
+
+
+def _create_whatsapp_account(
+    *,
+    account_name: str | None = None,
+    phone_id: str | None = None,
+    is_default_incoming: int = 0,
+):
+    suffix = frappe.generate_hash(length=8)
+    return frappe.get_doc({
+        "doctype": "WhatsApp Account",
+        "account_name": account_name or f"Webhook Test Account {suffix}",
+        "status": "Active",
+        "phone_id": phone_id or f"phone-{suffix}",
+        "is_default_incoming": is_default_incoming,
+    }).insert(ignore_permissions=True)
 
 # ---------------------------------------------------------------------------
 # Fixtures — list-shaped entry (standard Meta shape)
@@ -285,6 +302,36 @@ class TestWabaTrustCheck(FrappeTestCase):
         self.assertIn("bad-id", calls)
 
 
+class TestPhoneIdAccountResolution(FrappeTestCase):
+    def setUp(self):
+        frappe.reload_doc("frappe_whatsapp", "doctype", "whatsapp_account")
+
+    def test_known_phone_ids_map_to_distinct_accounts(self):
+        us = _create_whatsapp_account(
+            account_name=f"US Account {frappe.generate_hash(length=6)}",
+            phone_id=f"us-{frappe.generate_hash(length=8)}",
+        )
+        admission = _create_whatsapp_account(
+            account_name=f"Admission Account {frappe.generate_hash(length=6)}",
+            phone_id=f"dr-{frappe.generate_hash(length=8)}",
+        )
+
+        self.assertEqual(
+            get_whatsapp_account(us.phone_id).name,
+            us.name,
+        )
+        self.assertEqual(
+            get_whatsapp_account(admission.phone_id).name,
+            admission.name,
+        )
+
+    def test_unknown_explicit_phone_id_does_not_fallback_to_default(self):
+        default = _create_whatsapp_account(is_default_incoming=1)
+
+        self.assertIsNone(get_whatsapp_account("missing-phone-id"))
+        self.assertEqual(get_whatsapp_account().name, default.name)
+
+
 # ===========================================================================
 # 4. process_webhook_payload() end-to-end
 # ===========================================================================
@@ -450,3 +497,17 @@ class TestProcessWebhookPayloadTemplatePath(FrappeTestCase):
         enqueue a template sync."""
         process_webhook_payload(_MESSAGE_STATUS_PAYLOAD)
         mock_enqueue.assert_not_called()
+
+    @patch("frappe_whatsapp.utils.webhook.frappe.log_error")
+    @patch("frappe_whatsapp.utils.webhook.update_status")
+    @patch("frappe_whatsapp.utils.webhook.get_whatsapp_account",
+           return_value=None)
+    def test_unknown_message_phone_id_logs_and_stops_processing(
+        self, mock_get_account, mock_update_status, mock_log
+    ):
+        process_webhook_payload(_MESSAGE_STATUS_PAYLOAD)
+
+        mock_get_account.assert_called_once_with("987654321")
+        mock_update_status.assert_not_called()
+        mock_log.assert_called_once()
+        self.assertIn("phone_number_id", mock_log.call_args.kwargs["message"])

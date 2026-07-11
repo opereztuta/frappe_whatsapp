@@ -29,6 +29,7 @@ _COMPLIANCE_FIELDS = (
     "include_unsubscribe_instructions",
     "unsubscribe_text",
     "is_consent_request",
+    "is_call_permission_request",
     "required_consent_category",
 )
 
@@ -80,8 +81,8 @@ class WhatsAppTemplates(Document):
 
         actual_name: DF.Data | None
         buttons: DF.Table[WhatsAppButton]
-        compliance_auto_managed: DF.Check
         category: DF.Literal["", "TRANSACTIONAL", "MARKETING", "OTP", "UTILITY", "AUTHENTICATION"]
+        compliance_auto_managed: DF.Check
         field_names: DF.SmallText | None
         footer: DF.Data | None
         for_doctype: DF.Link | None
@@ -89,6 +90,7 @@ class WhatsAppTemplates(Document):
         header_type: DF.Literal["", "TEXT", "DOCUMENT", "IMAGE"]
         id: DF.Data | None
         include_unsubscribe_instructions: DF.Check
+        is_call_permission_request: DF.Check
         is_consent_request: DF.Check
         is_transactional: DF.Check
         language: DF.Link
@@ -144,8 +146,8 @@ class WhatsAppTemplates(Document):
         if not before or not before.compliance_auto_managed:
             return
         for field in _COMPLIANCE_FIELDS:
-            if str(getattr(self, field) or "") != str(
-                    getattr(before, field) or ""):
+            if str(getattr(self, field, "") or "") != str(
+                    getattr(before, field, "") or ""):
                 self.compliance_auto_managed = 0
                 return
 
@@ -194,7 +196,10 @@ class WhatsAppTemplates(Document):
         A consent request must not itself require prior opt-in/category
         consent, otherwise it can never be delivered in strict mode.
         """
-        if not self.is_consent_request:
+        if not (
+            self.is_consent_request
+            or getattr(self, "is_call_permission_request", 0)
+        ):
             return
 
         self.requires_opt_in = 0
@@ -368,6 +373,9 @@ class WhatsAppTemplates(Document):
         if self.footer:
             data["components"].append({"type": "FOOTER", "text": self.footer})
 
+        if getattr(self, "is_call_permission_request", 0):
+            data["components"].append({"type": "CALL_PERMISSION_REQUEST"})
+
         if self.buttons:
             from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_button.whatsapp_button import (  # noqa: E501
                 WhatsAppButton,
@@ -464,6 +472,9 @@ class WhatsAppTemplates(Document):
 
         if self.footer:
             data["components"].append({"type": "FOOTER", "text": self.footer})
+
+        if getattr(self, "is_call_permission_request", 0):
+            data["components"].append({"type": "CALL_PERMISSION_REQUEST"})
 
         if self.buttons:
             button_block: dict[str, Any] = {"type": "BUTTONS", "buttons": []}
@@ -711,6 +722,7 @@ def fetch() -> str:
                 doc.language = _resolve_language_link(meta_language)
                 doc.id = str(template.get("id") or "")
                 doc.whatsapp_account = account_name
+                doc.is_call_permission_request = 0
 
                 # category is Literal[...] -> validate before assigning
                 cat = str(template.get("category") or "")
@@ -722,7 +734,7 @@ def fetch() -> str:
                 components = _as_list(template.get("components"))
                 for c in components:
                     component = _as_dict(c)
-                    ctype = str(component.get("type") or "")
+                    ctype = str(component.get("type") or "").upper()
 
                     if ctype == "HEADER":
                         fmt = str(component.get("format") or "")
@@ -745,6 +757,9 @@ def fetch() -> str:
                             vals = [str(x) for x in body_text[0]]
                             doc.sample_values = ",".join(vals)
 
+                    elif ctype == "CALL_PERMISSION_REQUEST":
+                        doc.is_call_permission_request = 1
+
                     elif ctype == "BUTTONS":
                         doc.set("buttons", [])
                         frappe.db.delete(
@@ -763,7 +778,7 @@ def fetch() -> str:
                         buttons = _as_list(component.get("buttons"))
                         for i, b_raw in enumerate(buttons, start=1):
                             button = _as_dict(b_raw)
-                            meta_type = str(button.get("type") or "")
+                            meta_type = str(button.get("type") or "").upper()
 
                             if meta_type not in type_map:
                                 continue
@@ -940,6 +955,9 @@ def _derive_sync_compliance(doc: "WhatsAppTemplates", is_new: bool) -> None:
 
     if prefixes and any(template_name.startswith(p) for p in prefixes):
         doc.is_consent_request = 1
+        doc.requires_opt_in = 0
+        doc.required_consent_category = None
+    elif getattr(doc, "is_call_permission_request", 0):
         doc.requires_opt_in = 0
         doc.required_consent_category = None
     else:
