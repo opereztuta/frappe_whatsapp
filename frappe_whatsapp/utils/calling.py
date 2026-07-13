@@ -588,6 +588,28 @@ def _read_ami_response(sock) -> dict[str, str]:
     return parsed
 
 
+def _read_ami_banner(sock) -> str:
+    data = b""
+    while b"\n" not in data:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+        if len(data) > 4096:
+            frappe.throw(
+                _("AMI returned an invalid server banner."),
+                title=_("AMI Connection Failed"),
+            )
+
+    banner = data.decode("utf-8", errors="replace").strip()
+    if not banner.startswith("Asterisk Call Manager/"):
+        frappe.throw(
+            _("AMI returned an unexpected server banner."),
+            title=_("AMI Connection Failed"),
+        )
+    return banner
+
+
 def _send_ami_action(sock, fields: dict[str, str]) -> dict[str, str]:
     payload = "".join(f"{key}: {value}\r\n" for key, value in fields.items())
     sock.sendall(f"{payload}\r\n".encode("utf-8"))
@@ -642,10 +664,7 @@ def _send_ami_originate(settings, call_doc, action_id: str) -> dict[str, str]:
     sock.settimeout(timeout)
 
     try:
-        try:
-            _read_ami_response(sock)
-        except socket.timeout:
-            pass
+        _read_ami_banner(sock)
 
         login_response = _send_ami_action(sock, {
             "Action": "Login",

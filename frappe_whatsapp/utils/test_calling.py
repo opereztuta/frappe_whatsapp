@@ -11,6 +11,7 @@ from frappe.tests.utils import FrappeTestCase
 from frappe_whatsapp.utils.calling import (
     _build_originate_payload,
     _get_account,
+    _read_ami_banner,
     _send_ami_originate,
     handle_call_permission_reply,
     parse_permission_state,
@@ -130,15 +131,33 @@ class TestWhatsAppCallingAMI(FrappeTestCase):
             agent_extension="847",
         )
 
-    @patch("frappe_whatsapp.utils.calling._read_ami_response")
+    def test_read_ami_banner_accepts_production_single_line_frame(self):
+        sock = MagicMock()
+        sock.recv.return_value = b"Asterisk Call Manager/11.0.0\r\n"
+
+        banner = _read_ami_banner(sock)
+
+        self.assertEqual(banner, "Asterisk Call Manager/11.0.0")
+        sock.recv.assert_called_once_with(4096)
+
+    def test_read_ami_banner_rejects_unexpected_data(self):
+        sock = MagicMock()
+        sock.recv.return_value = b"unexpected server\r\n"
+
+        with self.assertRaises(frappe.ValidationError) as raised:
+            _read_ami_banner(sock)
+
+        self.assertIn("unexpected server banner", str(raised.exception))
+
+    @patch("frappe_whatsapp.utils.calling._read_ami_banner")
     @patch("frappe_whatsapp.utils.calling._send_ami_action")
     @patch("frappe_whatsapp.utils.calling.socket.create_connection")
     def test_ami_originate_disables_events_and_logs_off(
-        self, mock_connect, mock_action, mock_read
+        self, mock_connect, mock_action, mock_banner
     ):
         sock = MagicMock()
         mock_connect.return_value = sock
-        mock_read.return_value = {}
+        mock_banner.return_value = "Asterisk Call Manager/11.0.0"
         mock_action.side_effect = [
             {"Response": "Success", "Message": "Authentication accepted"},
             {
@@ -177,17 +196,18 @@ class TestWhatsAppCallingAMI(FrappeTestCase):
                 call(sock, {"Action": "Logoff"}),
             ],
         )
+        mock_banner.assert_called_once_with(sock)
         sock.close.assert_called_once()
 
-    @patch("frappe_whatsapp.utils.calling._read_ami_response")
+    @patch("frappe_whatsapp.utils.calling._read_ami_banner")
     @patch("frappe_whatsapp.utils.calling._send_ami_action")
     @patch("frappe_whatsapp.utils.calling.socket.create_connection")
     def test_ami_login_rejection_is_preserved_without_secret(
-        self, mock_connect, mock_action, mock_read
+        self, mock_connect, mock_action, mock_banner
     ):
         sock = MagicMock()
         mock_connect.return_value = sock
-        mock_read.return_value = {}
+        mock_banner.return_value = "Asterisk Call Manager/11.0.0"
         mock_action.side_effect = [
             {"Response": "Error", "Message": "Authentication failed"},
             {"Response": "Goodbye"},
@@ -205,15 +225,15 @@ class TestWhatsAppCallingAMI(FrappeTestCase):
         )
         sock.close.assert_called_once()
 
-    @patch("frappe_whatsapp.utils.calling._read_ami_response")
+    @patch("frappe_whatsapp.utils.calling._read_ami_banner")
     @patch("frappe_whatsapp.utils.calling._send_ami_action")
     @patch("frappe_whatsapp.utils.calling.socket.create_connection")
     def test_ami_login_requires_explicit_success(
-        self, mock_connect, mock_action, mock_read
+        self, mock_connect, mock_action, mock_banner
     ):
         sock = MagicMock()
         mock_connect.return_value = sock
-        mock_read.return_value = {}
+        mock_banner.return_value = "Asterisk Call Manager/11.0.0"
         mock_action.side_effect = [{"Event": "FullyBooted"}, {}]
 
         with self.assertRaises(frappe.ValidationError) as raised:
@@ -223,15 +243,15 @@ class TestWhatsAppCallingAMI(FrappeTestCase):
         self.assertIn("unexpected response", str(raised.exception))
         sock.close.assert_called_once()
 
-    @patch("frappe_whatsapp.utils.calling._read_ami_response")
+    @patch("frappe_whatsapp.utils.calling._read_ami_banner")
     @patch("frappe_whatsapp.utils.calling._send_ami_action")
     @patch("frappe_whatsapp.utils.calling.socket.create_connection")
     def test_ami_originate_rejects_mismatched_action_id(
-        self, mock_connect, mock_action, mock_read
+        self, mock_connect, mock_action, mock_banner
     ):
         sock = MagicMock()
         mock_connect.return_value = sock
-        mock_read.return_value = {}
+        mock_banner.return_value = "Asterisk Call Manager/11.0.0"
         mock_action.side_effect = [
             {"Response": "Success"},
             {"Response": "Success", "ActionID": "another-action"},
