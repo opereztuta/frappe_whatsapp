@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
+import frappe
+
 from frappe.tests.utils import FrappeTestCase
 from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import (  # noqa: E501
     _COMPLIANCE_FIELDS,
@@ -12,6 +14,7 @@ from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templat
     _footer_looks_like_unsubscribe,
     _normalize_meta_language_code,
     _resolve_language_link,
+    fetch,
     WhatsAppTemplates
 )
 
@@ -38,6 +41,87 @@ class TestWhatsAppTemplates(FrappeTestCase):
             self.assertEqual(_resolve_language_link("en_US"), "en-US")
             self.assertEqual(_resolve_language_link("es"), "es")
             self.assertEqual(_resolve_language_link("pt_BR"), "")
+
+
+class TestTemplateMetaSync(FrappeTestCase):
+    def _make_account(self, suffix: str):
+        return frappe.get_doc({
+            "doctype": "WhatsApp Account",
+            "account_name": f"Template Sync {suffix}",
+            "status": "Active",
+            "token": "test-token",
+            "url": "https://graph.facebook.com",
+            "version": "v24.0",
+            "phone_id": f"phone-{suffix}",
+            "business_id": f"waba-{suffix}",
+            "app_id": f"app-{suffix}",
+            "app_secret": "test-secret",
+            "webhook_verify_token": f"verify-{suffix}",
+        }).insert(ignore_permissions=True)
+
+    @patch(f"{_MOD}._resolve_language_link", return_value="en")
+    @patch(f"{_MOD}.get_paginated_data")
+    @patch(f"{_MOD}.validate_account_connection")
+    def test_call_permission_component_is_imported_for_selected_account(
+        self, mock_validate, mock_pages, _mock_language
+    ):
+        suffix = frappe.generate_hash(length=8)
+        account = self._make_account(suffix)
+        actual_name = f"call_permission_{suffix}"
+        mock_validate.return_value = {"valid": True}
+        mock_pages.return_value = [{
+            "id": f"template-{suffix}",
+            "name": actual_name,
+            "status": "APPROVED",
+            "language": "en_US",
+            "category": "UTILITY",
+            "components": [
+                {"type": "BODY", "text": "Can we call you?"},
+                {"type": "CALL_PERMISSION_REQUEST"},
+            ],
+        }]
+
+        message = fetch(account.name)
+
+        template_name = frappe.db.get_value(
+            "WhatsApp Templates",
+            {"actual_name": actual_name},
+            "name",
+        )
+        self.assertTrue(template_name)
+        template = frappe.get_doc("WhatsApp Templates", template_name)
+        self.assertEqual(template.whatsapp_account, account.name)
+        self.assertEqual(template.status, "APPROVED")
+        self.assertEqual(template.language_code, "en_US")
+        self.assertEqual(template.is_call_permission_request, 1)
+        self.assertIn("1 imported", message)
+        self.assertEqual(mock_validate.call_count, 1)
+        self.assertEqual(mock_validate.call_args.args[0].name, account.name)
+
+    @patch(f"{_MOD}.get_paginated_data", return_value=[])
+    @patch(f"{_MOD}.validate_account_connection", return_value={"valid": True})
+    def test_selected_sync_does_not_validate_other_active_accounts(
+        self, mock_validate, _mock_pages
+    ):
+        selected = self._make_account(f"selected-{frappe.generate_hash(length=6)}")
+        self._make_account(f"other-{frappe.generate_hash(length=6)}")
+
+        fetch(selected.name)
+
+        self.assertEqual(mock_validate.call_count, 1)
+        self.assertEqual(mock_validate.call_args.args[0].name, selected.name)
+
+    @patch(f"{_MOD}.get_paginated_data", return_value=[])
+    @patch(f"{_MOD}.validate_account_connection", return_value={"valid": True})
+    def test_template_sync_does_not_commit_per_template(
+        self, _mock_validate, _mock_pages
+    ):
+        account = self._make_account(f"atomic-{frappe.generate_hash(length=6)}")
+
+        with patch.object(frappe.db, "commit") as mock_commit:
+            fetch(account.name)
+
+        mock_commit.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

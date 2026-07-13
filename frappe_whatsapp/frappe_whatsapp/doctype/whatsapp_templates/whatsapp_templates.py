@@ -14,6 +14,11 @@ from frappe_whatsapp.utils.consent import get_compliance_settings, get_opt_out_k
 from frappe.utils import get_bench_path, get_site_base_path
 from typing import Any, Mapping, cast
 
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_account.whatsapp_account import (
+    validate_account_connection,
+)
+from frappe_whatsapp.utils.meta import get_paginated_data
+
 _ALLOWED_CATEGORY = {
     "", "TRANSACTIONAL", "MARKETING", "OTP", "UTILITY", "AUTHENTICATION"
 }
@@ -642,50 +647,71 @@ def _resolve_language_link(value: Any) -> str:
 
 def _get_integration_error() -> dict[str, Any]:
     integration = getattr(frappe.flags, "integration_request", None)
-    if not integration or not hasattr(integration, "json"):
+    if integration is None or not hasattr(integration, "json"):
         return {}
-    payload = integration.json()
+    try:
+        payload = integration.json()
+    except (TypeError, ValueError):
+        return {}
     payload_dict = _as_dict(payload)
     return _as_dict(payload_dict.get("error"))
 
 
 @frappe.whitelist()
-def fetch() -> str:
+def fetch(whatsapp_account: str | None = None) -> str:
     """Fetch templates from Meta and upsert into WhatsApp Templates."""
-    whatsapp_accounts = frappe.get_all(
-        "WhatsApp Account",
-        filters={"status": "Active"},
-        fields=["name", "url", "version", "business_id"],
-    )
+    frappe.only_for("System Manager")
+
+    if whatsapp_account:
+        selected = frappe.get_doc("WhatsApp Account", whatsapp_account)
+        selected.check_permission("read")
+        if selected.status != "Active":
+            frappe.throw(
+                _("WhatsApp Account {0} is not active.").format(
+                    whatsapp_account
+                )
+            )
+        whatsapp_accounts = [selected]
+    else:
+        whatsapp_accounts = [
+            frappe.get_doc("WhatsApp Account", row.name)
+            for row in frappe.get_all(
+                "WhatsApp Account",
+                filters={"status": "Active"},
+                fields=["name"],
+            )
+        ]
+
+    imported = 0
+    updated = 0
 
     for account in whatsapp_accounts:
-        account_map = cast(Mapping[str, Any], account)
-
-        account_name = str(account_map.get("name") or "")
+        account_name = str(account.name or "")
         if not account_name:
             continue
 
-        # get credentials
-        token = frappe.get_doc(
-            "WhatsApp Account", account_name).get_password("token")
-        url = str(account_map.get("url") or "")
-        version = str(account_map.get("version") or "")
-        business_id = str(account_map.get("business_id") or "")
+        validate_account_connection(account)
+        token = account.get_password("token")
+        url = str(account.url or "").rstrip("/")
+        version = str(account.version or "").strip("/")
+        business_id = str(account.business_id or "")
 
         headers = {
-            "authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {token}",
             "content-type": "application/json",
         }
 
         try:
-            raw = make_request(
-                "GET",
+            templates = get_paginated_data(
                 f"{url}/{version}/{business_id}/message_templates",
+                account_name=account_name,
+                operation=_("template synchronization"),
                 headers=headers,
+                params={
+                    "fields": "id,name,status,language,category,components",
+                    "limit": 100,
+                },
             )
-
-            resp = _as_dict(raw)
-            templates = _as_list(resp.get("data"))
 
             for t in templates:
                 template = _as_dict(t)
@@ -713,6 +739,15 @@ def fetch() -> str:
                         frappe.new_doc("WhatsApp Templates"))
                     doc.template_name = template_name
                     doc.actual_name = template_name
+
+                # Reset fields that are fully managed by Meta sync so removed
+                # components do not leave stale local values behind.
+                doc.header_type = cast(Any, "")
+                doc.header = ""
+                doc.footer = ""
+                doc.template = ""
+                doc.sample_values = ""
+                doc.set("buttons", [])
 
                 # status/language/id (these are simple Data fields)
                 meta_language = str(template.get("language") or "")
@@ -761,13 +796,6 @@ def fetch() -> str:
                         doc.is_call_permission_request = 1
 
                     elif ctype == "BUTTONS":
-                        doc.set("buttons", [])
-                        frappe.db.delete(
-                            "WhatsApp Button",
-                            {"parent": doc.name,
-                             "parenttype": "WhatsApp Templates"},
-                        )
-
                         type_map = {
                             "URL": "Visit Website",
                             "PHONE_NUMBER": "Call Phone",
@@ -812,15 +840,26 @@ def fetch() -> str:
 
                 _derive_sync_compliance(doc, is_new=(existing_name is None))
                 upsert_doc_without_hooks(doc, "WhatsApp Button", "buttons")
+                if existing_name:
+                    updated += 1
+                else:
+                    imported += 1
 
-        except Exception as e:
-            err = _get_integration_error()
-            title = str(err.get("error_user_title") or "Error")
-            msg = str(err.get("error_user_msg") or err.get(
-                "message") or str(e))
-            frappe.throw(msg=msg, title=title)
+        except frappe.ValidationError:
+            raise
+        except Exception as exc:
+            frappe.throw(
+                _("WhatsApp Account {0}: template synchronization failed. {1}").format(
+                    account_name,
+                    str(exc),
+                )
+            )
 
-    return "Successfully fetched templates from meta"
+    account_label = whatsapp_account or _("all active accounts")
+    return _(
+        "Successfully synced templates from Meta for {0}: "
+        "{1} imported, {2} updated."
+    ).format(account_label, imported, updated)
 
 
 def upsert_doc_without_hooks(doc, child_dt, child_field):
@@ -836,7 +875,6 @@ def upsert_doc_without_hooks(doc, child_dt, child_field):
         d.parenttype = doc.doctype
         d.parentfield = child_field
         d.db_insert()
-    frappe.db.commit()
 
 
 def _footer_looks_like_unsubscribe(
