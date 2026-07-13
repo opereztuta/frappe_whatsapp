@@ -143,13 +143,22 @@ def parse_permission_state(payload: dict[str, Any] | None) -> dict[str, Any]:
     payload = payload or {}
     state = payload
 
-    data = _as_list(payload.get("data"))
+    data_value = payload.get("data")
+    data = _as_list(data_value)
     if data:
         state = _as_dict(data[0])
-    elif "call_permission" in payload:
-        state = _as_dict(payload.get("call_permission"))
-    elif "call_permission_reply" in payload:
-        state = _as_dict(payload.get("call_permission_reply"))
+    elif isinstance(data_value, dict):
+        state = data_value
+
+    for nested_key in (
+        "call_permission",
+        "call_permission_reply",
+        "permission",
+    ):
+        nested_state = _as_dict(state.get(nested_key))
+        if nested_state:
+            state = nested_state
+            break
 
     raw_expires = (
         state.get("expiration_timestamp")
@@ -173,7 +182,10 @@ def parse_permission_state(payload: dict[str, Any] | None) -> dict[str, Any]:
         is_permanent=is_permanent,
         expires_at=expires_at,
     )
-    if ("data" in payload and not data) or (not data and not state):
+    if (
+        isinstance(data_value, (list, dict))
+        and not data_value
+    ) or not state:
         status = "No Permission"
 
     return {

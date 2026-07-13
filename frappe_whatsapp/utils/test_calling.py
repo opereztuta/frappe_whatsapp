@@ -58,6 +58,21 @@ class TestWhatsAppCallingPermissionState(FrappeTestCase):
             "Rejected",
         )
 
+    def test_parse_live_meta_permission_envelope(self):
+        payload = {
+            "messaging_product": "whatsapp",
+            "permission": {"status": "permanent"},
+            "actions": [{
+                "action_name": "start_call",
+                "can_perform_action": True,
+            }],
+        }
+
+        parsed = parse_permission_state(payload)
+
+        self.assertEqual(parsed["permission_status"], "Permanent")
+        self.assertEqual(parsed["is_permanent"], 1)
+
 
 class TestWhatsAppCallingAMI(FrappeTestCase):
     def setUp(self):
