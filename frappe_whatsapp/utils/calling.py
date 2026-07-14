@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import socket
 import ssl
 from datetime import datetime, timedelta
@@ -27,6 +28,13 @@ TERMINAL_CALL_STATUSES = {
     "Cancelled",
 }
 CALL_PERMISSION_STATE_TTL_SECONDS = 60
+CALL_ACTION_PERMISSION_REQUEST = "Permission Request"
+CALL_ACTION_OUTBOUND = "Outbound Call"
+_AGENT_EXTENSION_PATTERN = re.compile(r"^[0-9]{1,10}$", re.ASCII)
+_IDEMPOTENCY_KEY_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,139}$",
+    re.ASCII,
+)
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -45,8 +53,46 @@ def _normalize_phone_number(phone_number: Any) -> str:
     return "".join(
         character
         for character in str(phone_number or "")
-        if character.isdigit()
+        if character in "0123456789"
     )
+
+
+def validate_call_phone_number(phone_number: Any) -> str:
+    number = _normalize_phone_number(phone_number)
+    if not 8 <= len(number) <= 15:
+        frappe.throw(
+            _("Phone Number must contain between 8 and 15 digits."),
+            title=_("Invalid Phone Number"),
+        )
+    return number
+
+
+def validate_agent_extension(agent_extension: Any) -> str:
+    raw_extension = str(agent_extension or "")
+    extension = raw_extension.strip()
+    if (
+        extension != raw_extension
+        or not _AGENT_EXTENSION_PATTERN.fullmatch(extension)
+    ):
+        frappe.throw(
+            _("PBX extension must contain only 1 to 10 ASCII digits."),
+            title=_("Invalid PBX Extension"),
+        )
+    return extension
+
+
+def validate_idempotency_key(idempotency_key: Any) -> str:
+    raw_key = str(idempotency_key or "")
+    key = raw_key.strip()
+    if key != raw_key or not _IDEMPOTENCY_KEY_PATTERN.fullmatch(key):
+        frappe.throw(
+            _(
+                "Idempotency Key must be 8 to 140 characters and contain "
+                "only letters, digits, periods, underscores, colons, or hyphens."
+            ),
+            title=_("Invalid Idempotency Key"),
+        )
+    return key
 
 
 def _get_settings():
@@ -111,6 +157,28 @@ def _get_agent(user: str | None = None, *, throw: bool = True):
             title=_("PBX Extension Required"),
         )
     return None
+
+
+def _resolve_agent_identity(
+    *,
+    agent_user: str | None = None,
+    agent_extension: str | None = None,
+    throw: bool = True,
+) -> tuple[str | None, str | None]:
+    """Resolve exactly one agent mode: mapped Desk user or direct extension."""
+    if agent_extension not in (None, ""):
+        if agent_user:
+            frappe.throw(
+                _("Provide either Agent User or Agent Extension, not both."),
+                title=_("Invalid Calling Agent"),
+            )
+        return None, validate_agent_extension(agent_extension)
+
+    resolved_user = agent_user or frappe.session.user
+    agent = _get_agent(resolved_user, throw=throw)
+    if not agent:
+        return resolved_user, None
+    return resolved_user, validate_agent_extension(agent.extension)
 
 
 def _timestamp_to_datetime(value: Any) -> datetime | None:
@@ -273,6 +341,56 @@ def _permission_request_lock_name(
     return f"whatsapp-call-permission-{digest}"
 
 
+def _call_start_lock_name(
+    whatsapp_account: str,
+    phone_number: str,
+) -> str:
+    key = f"{whatsapp_account}:{_normalize_phone_number(phone_number)}"
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+    return f"whatsapp-call-start-{digest}"
+
+
+def _get_idempotent_call(
+    *,
+    idempotency_key: str | None,
+    action_type: str,
+    phone_number: str,
+    whatsapp_account: str,
+    agent_extension: str,
+):
+    if not idempotency_key:
+        return None
+
+    existing = frappe.db.get_value(
+        "WhatsApp Call",
+        {"idempotency_key": idempotency_key},
+        "name",
+    )
+    if not existing:
+        return None
+
+    call_doc = frappe.get_doc("WhatsApp Call", existing)
+    expected = {
+        "action_type": action_type,
+        "phone_number": _normalize_phone_number(phone_number),
+        "whatsapp_account": whatsapp_account,
+        "agent_extension": agent_extension,
+    }
+    actual = {
+        "action_type": str(call_doc.action_type or ""),
+        "phone_number": _normalize_phone_number(call_doc.phone_number),
+        "whatsapp_account": str(call_doc.whatsapp_account or ""),
+        "agent_extension": str(call_doc.agent_extension or ""),
+    }
+    if actual != expected:
+        frappe.local.response["http_status_code"] = 409
+        frappe.throw(
+            _("Idempotency Key has already been used for another call action."),
+            title=_("Idempotency Conflict"),
+        )
+    return call_doc
+
+
 def _upsert_permission(
     *,
     whatsapp_account: str,
@@ -384,6 +502,7 @@ def get_call_state(
     phone_number: str,
     contact: str | None = None,
     agent_user: str | None = None,
+    agent_extension: str | None = None,
     whatsapp_account: str | None = None,
 ) -> dict[str, Any]:
     settings = _get_settings()
@@ -402,7 +521,11 @@ def get_call_state(
         }
 
     account = _get_account(whatsapp_account)
-    agent = _get_agent(agent_user, throw=False)
+    resolved_agent_user, resolved_extension = _resolve_agent_identity(
+        agent_user=agent_user,
+        agent_extension=agent_extension,
+        throw=False,
+    )
     number = _normalize_phone_number(phone_number)
     account_name = str(account.name)
     permission = get_local_permission(number, account_name)
@@ -412,7 +535,7 @@ def get_call_state(
         contact=contact,
     )
 
-    if not agent:
+    if not resolved_extension:
         status = "Missing Agent Extension"
         message = _("No enabled PBX extension is mapped for your user.")
     else:
@@ -445,7 +568,7 @@ def get_call_state(
                         if permission else "Unknown"
                     ),
                     "pending_call": pending.name if pending else None,
-                    "agent_extension": agent.extension,
+                    "agent_extension": resolved_extension,
                     "call_permission_template": settings.call_permission_template,
                     "whatsapp_account": account_name,
                 }
@@ -481,7 +604,7 @@ def get_call_state(
             )
 
     can_request_permission = bool(
-        agent
+        resolved_extension
         and status == "No Permission"
         and _permission_action_allowed(
             permission, "send_call_permission_request") is True
@@ -497,9 +620,16 @@ def get_call_state(
             permission.permission_status if permission else "No Permission"
         ),
         "pending_call": pending.name if pending else None,
-        "agent_extension": agent.extension if agent else None,
+        "agent_extension": resolved_extension,
+        "agent_user": resolved_agent_user,
         "call_permission_template": settings.call_permission_template,
         "whatsapp_account": account_name,
+        "permission_expires_at": (
+            permission.expires_at if permission else None
+        ),
+        "permission_last_checked_at": (
+            permission.last_checked_at if permission else None
+        ),
     }
 
 
@@ -508,9 +638,13 @@ def _create_call(
     phone_number: str,
     whatsapp_account: str,
     contact: str | None,
-    agent_user: str,
+    agent_user: str | None,
     agent_extension: str,
     status: str,
+    action_type: str | None = None,
+    source_app: str | None = None,
+    external_reference: str | None = None,
+    idempotency_key: str | None = None,
 ):
     doc = frappe.get_doc({
         "doctype": "WhatsApp Call",
@@ -520,6 +654,10 @@ def _create_call(
         "agent_user": agent_user,
         "agent_extension": agent_extension,
         "status": status,
+        "action_type": action_type,
+        "source_app": source_app,
+        "external_reference": external_reference,
+        "idempotency_key": idempotency_key,
         "requested_at": now_datetime(),
     })
     doc.insert(ignore_permissions=True)
@@ -564,8 +702,10 @@ def _send_permission_template(*, call_doc, settings):
         "content_type": "text",
         "template": template.name,
         "whatsapp_account": call_doc.whatsapp_account,
+        "source_app": call_doc.source_app,
+        "external_reference": call_doc.external_reference,
     })
-    message_doc.insert(ignore_permissions=False)
+    message_doc.insert(ignore_permissions=True)
 
     call_doc.permission_request_message = message_doc.name
     call_doc.status = "Permission Requested"
@@ -585,10 +725,27 @@ def _send_permission_template(*, call_doc, settings):
     )
     publish_call_update(call_doc, _("Call permission requested."))
     return {
+        "ok": True,
         "status": call_doc.status,
         "call": call_doc.name,
         "message": _("Call permission request sent."),
         "waiting_for_permission": True,
+        "retryable": False,
+        "idempotency_key": call_doc.idempotency_key,
+    }
+
+
+def _permission_request_replay_result(call_doc) -> dict[str, Any]:
+    waiting = call_doc.status == "Permission Requested"
+    return {
+        "ok": call_doc.status not in {"Failed", "Permission Rejected"},
+        "status": call_doc.status,
+        "call": call_doc.name,
+        "message": _("Returning the existing call-permission request."),
+        "waiting_for_permission": waiting,
+        "retryable": False,
+        "idempotency_key": call_doc.idempotency_key,
+        "idempotent_replay": True,
     }
 
 
@@ -597,15 +754,24 @@ def request_call_permission(
     phone_number: str,
     contact: str | None = None,
     agent_user: str | None = None,
+    agent_extension: str | None = None,
     whatsapp_account: str | None = None,
+    source_app: str | None = None,
+    external_reference: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Send one explicit call-permission request without starting a call."""
+    resolved_agent_user, resolved_extension = _resolve_agent_identity(
+        agent_user=agent_user,
+        agent_extension=agent_extension,
+    )
+    assert resolved_extension is not None
+    number = validate_call_phone_number(phone_number)
+    if idempotency_key:
+        idempotency_key = validate_idempotency_key(idempotency_key)
     settings = _ensure_enabled()
     account = _get_account(whatsapp_account)
     account_name = str(account.name)
-    agent_user = agent_user or frappe.session.user
-    agent = _get_agent(agent_user)
-    number = _normalize_phone_number(phone_number)
     _validate_call_permission_template(settings, account_name)
 
     lock_context = filelock(
@@ -616,7 +782,33 @@ def request_call_permission(
     try:
         lock_context.__enter__()
         try:
-            permission = refresh_permission_state(number, account_name)
+            replay = _get_idempotent_call(
+                idempotency_key=idempotency_key,
+                action_type=CALL_ACTION_PERMISSION_REQUEST,
+                phone_number=number,
+                whatsapp_account=account_name,
+                agent_extension=resolved_extension,
+            )
+            if replay:
+                return _permission_request_replay_result(replay)
+
+            try:
+                permission = refresh_permission_state(number, account_name)
+            except frappe.ValidationError:
+                return {
+                    "ok": False,
+                    "status": "Unavailable",
+                    "call": None,
+                    "message": _(
+                        "Could not verify call permission with Meta. "
+                        "Try again shortly."
+                    ),
+                    "waiting_for_permission": False,
+                    "retryable": True,
+                    "can_request_permission": False,
+                    "can_call": False,
+                    "idempotency_key": idempotency_key,
+                }
             if permission_is_active(permission):
                 can_start = _permission_action_allowed(permission, "start_call")
                 message = (
@@ -631,10 +823,13 @@ def request_call_permission(
                     )
                 )
                 return {
+                    "ok": can_start is True,
                     "status": "Ready" if can_start is True else "Unavailable",
                     "call": None,
                     "message": message,
                     "waiting_for_permission": False,
+                    "retryable": False,
+                    "idempotency_key": idempotency_key,
                 }
 
             pending = _find_pending_call(
@@ -643,12 +838,15 @@ def request_call_permission(
             )
             if pending:
                 return {
+                    "ok": True,
                     "status": pending.status,
                     "call": pending.name,
                     "message": _(
                         "A call-permission request is already waiting for this contact."
                     ),
                     "waiting_for_permission": True,
+                    "retryable": False,
+                    "idempotency_key": pending.idempotency_key,
                 }
 
             if (
@@ -657,21 +855,30 @@ def request_call_permission(
                 )
                 is not True
             ):
-                frappe.throw(
-                    _(
+                return {
+                    "ok": False,
+                    "status": "Unavailable",
+                    "call": None,
+                    "message": _(
                         "Meta does not currently allow a call-permission request "
                         "for this contact."
                     ),
-                    title=_("Call Permission Request Unavailable"),
-                )
+                    "waiting_for_permission": False,
+                    "retryable": False,
+                    "idempotency_key": idempotency_key,
+                }
 
             call_doc = _create_call(
                 phone_number=number,
                 whatsapp_account=account_name,
                 contact=contact,
-                agent_user=agent_user,
-                agent_extension=str(agent.extension),
+                agent_user=resolved_agent_user,
+                agent_extension=resolved_extension,
                 status="Permission Requested",
+                action_type=CALL_ACTION_PERMISSION_REQUEST,
+                source_app=source_app,
+                external_reference=external_reference,
+                idempotency_key=idempotency_key,
             )
             result = _send_permission_template(
                 call_doc=call_doc,
@@ -689,10 +896,40 @@ def request_call_permission(
             if not release_after_transaction:
                 lock_context.__exit__(None, None, None)
     except LockTimeoutError:
-        frappe.throw(
-            _("Another call-permission request is already being processed."),
-            title=_("Call Permission Request In Progress"),
-        )
+        return {
+            "ok": False,
+            "status": "Unavailable",
+            "call": None,
+            "message": _(
+                "Another call-permission request is already being processed."
+            ),
+            "waiting_for_permission": False,
+            "retryable": True,
+            "idempotency_key": idempotency_key,
+        }
+
+
+def _outbound_call_result(call_doc, *, replay: bool = False) -> dict[str, Any]:
+    queued = call_doc.status == "PBX Queued"
+    result = {
+        "ok": queued,
+        "status": call_doc.status,
+        "call": call_doc.name,
+        "message": (
+            _("Calling your PBX extension now.")
+            if queued
+            else _("Could not queue the PBX call.")
+        ),
+        "waiting_for_permission": False,
+        "retryable": call_doc.status == "Failed",
+        "can_request_permission": False,
+        "can_call": call_doc.status == "Failed",
+        "idempotency_key": getattr(call_doc, "idempotency_key", None),
+        "failure_reason": getattr(call_doc, "failure_reason", None) or None,
+    }
+    if replay:
+        result["idempotent_replay"] = True
+    return result
 
 
 def start_outbound_call(
@@ -700,45 +937,125 @@ def start_outbound_call(
     phone_number: str,
     contact: str | None = None,
     agent_user: str | None = None,
+    agent_extension: str | None = None,
     whatsapp_account: str | None = None,
+    source_app: str | None = None,
+    external_reference: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
+    resolved_agent_user, resolved_extension = _resolve_agent_identity(
+        agent_user=agent_user,
+        agent_extension=agent_extension,
+    )
+    assert resolved_extension is not None
+    number = validate_call_phone_number(phone_number)
+    if idempotency_key:
+        idempotency_key = validate_idempotency_key(idempotency_key)
     _ensure_enabled()
     account = _get_account(whatsapp_account)
-    agent_user = agent_user or frappe.session.user
-    agent = _get_agent(agent_user)
-    number = _normalize_phone_number(phone_number)
 
     account_name = str(account.name)
-    permission = refresh_permission_state(number, account_name)
-    if not permission_is_active(permission):
-        frappe.throw(
-            _(
-                "Active WhatsApp call permission is required. Send a call-permission "
-                "request and wait for the contact to accept it."
-            ),
-            title=_("Call Permission Required"),
-        )
-    if _permission_action_allowed(permission, "start_call") is not True:
-        frappe.throw(
-            _("Meta does not currently allow starting this WhatsApp call."),
-            title=_("WhatsApp Call Unavailable"),
-        )
-
-    call_doc = _create_call(
-        phone_number=number,
-        whatsapp_account=account_name,
-        contact=contact,
-        agent_user=agent_user,
-        agent_extension=str(agent.extension),
-        status="Permission Accepted",
+    lock_context = filelock(
+        _call_start_lock_name(account_name, number),
+        timeout=5,
     )
-    originate_call(call_doc, raise_on_failure=True)
-    return {
-        "status": call_doc.status,
-        "call": call_doc.name,
-        "message": _("Calling your PBX extension now."),
-        "waiting_for_permission": False,
-    }
+    release_after_transaction = False
+    try:
+        lock_context.__enter__()
+        try:
+            replay = _get_idempotent_call(
+                idempotency_key=idempotency_key,
+                action_type=CALL_ACTION_OUTBOUND,
+                phone_number=number,
+                whatsapp_account=account_name,
+                agent_extension=resolved_extension,
+            )
+            if replay:
+                return _outbound_call_result(replay, replay=True)
+
+            try:
+                permission = refresh_permission_state(number, account_name)
+            except frappe.ValidationError:
+                return {
+                    "ok": False,
+                    "status": "Unavailable",
+                    "call": None,
+                    "message": _(
+                        "Could not verify call permission with Meta. "
+                        "Try again shortly."
+                    ),
+                    "waiting_for_permission": False,
+                    "retryable": True,
+                    "can_request_permission": False,
+                    "can_call": False,
+                    "idempotency_key": idempotency_key,
+                }
+            if not permission_is_active(permission):
+                return {
+                    "ok": False,
+                    "status": "No Permission",
+                    "call": None,
+                    "message": _(
+                        "Active WhatsApp call permission is required. Send a "
+                        "call-permission request and wait for the contact to accept it."
+                    ),
+                    "waiting_for_permission": False,
+                    "retryable": False,
+                    "can_request_permission": _permission_action_allowed(
+                        permission, "send_call_permission_request"
+                    ) is True,
+                    "can_call": False,
+                    "idempotency_key": idempotency_key,
+                }
+            if _permission_action_allowed(permission, "start_call") is not True:
+                return {
+                    "ok": False,
+                    "status": "Unavailable",
+                    "call": None,
+                    "message": _(
+                        "Meta does not currently allow starting this WhatsApp call."
+                    ),
+                    "waiting_for_permission": False,
+                    "retryable": False,
+                    "can_request_permission": False,
+                    "can_call": False,
+                    "idempotency_key": idempotency_key,
+                }
+
+            call_doc = _create_call(
+                phone_number=number,
+                whatsapp_account=account_name,
+                contact=contact,
+                agent_user=resolved_agent_user,
+                agent_extension=resolved_extension,
+                status="Permission Accepted",
+                action_type=CALL_ACTION_OUTBOUND,
+                source_app=source_app,
+                external_reference=external_reference,
+                idempotency_key=idempotency_key,
+            )
+            originate_call(call_doc, raise_on_failure=False)
+
+            def release_lock():
+                lock_context.__exit__(None, None, None)
+
+            frappe.db.after_commit.add(release_lock)
+            frappe.db.after_rollback.add(release_lock)
+            release_after_transaction = True
+            return _outbound_call_result(call_doc)
+        finally:
+            if not release_after_transaction:
+                lock_context.__exit__(None, None, None)
+    except LockTimeoutError:
+        return {
+            "ok": False,
+            "status": "Unavailable",
+            "call": None,
+            "message": _("Another outbound call is already being processed."),
+            "waiting_for_permission": False,
+            "retryable": True,
+            "idempotency_key": idempotency_key,
+        }
 
 
 def _safe_format(template: str, values: dict[str, str], *, label: str) -> str:
@@ -753,10 +1070,11 @@ def _safe_format(template: str, values: dict[str, str], *, label: str) -> str:
 
 def _build_originate_payload(settings, call_doc, action_id: str) -> dict[str, str]:
     number = _normalize_phone_number(call_doc.phone_number)
+    extension = validate_agent_extension(call_doc.agent_extension)
     values = {
         "number": number,
         "e164": f"+{number}",
-        "extension": str(call_doc.agent_extension or ""),
+        "extension": extension,
     }
     channel = _safe_format(
         settings.agent_channel_template or "Local/{extension}@from-internal",
@@ -778,7 +1096,7 @@ def _build_originate_payload(settings, call_doc, action_id: str) -> dict[str, st
         "Exten": exten,
         "Priority": "1",
         "Timeout": str(timeout_ms),
-        "CallerID": f"WhatsApp <{call_doc.agent_extension}>",
+        "CallerID": f"WhatsApp <{extension}>",
         "Async": "true",
         "Variable": f"WHATSAPP_CALL_ID={call_doc.name}",
     }
