@@ -4,10 +4,12 @@ import socket
 import time
 from contextlib import nullcontext
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, call, patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
+from frappe.utils import now_datetime
 
 from frappe_whatsapp.utils.calling import (
     _build_originate_payload,
@@ -23,6 +25,12 @@ from frappe_whatsapp.utils.calling import (
     request_call_permission,
     start_outbound_call,
 )
+
+if TYPE_CHECKING:
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_account.whatsapp_account import WhatsAppAccount
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_call.whatsapp_call import WhatsAppCall
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_call_permission.whatsapp_call_permission import WhatsAppCallPermission
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import WhatsAppMessage
 
 
 class TestWhatsAppCallingPermissionState(FrappeTestCase):
@@ -107,7 +115,8 @@ class TestWhatsAppCallingAMI(FrappeTestCase):
             agent_extension="1001",
         )
 
-        payload = _build_originate_payload(settings, call_doc, "action-1")
+        payload = _build_originate_payload(
+            cast(Any, settings), cast(Any, call_doc), "action-1")
 
         self.assertEqual(payload["Action"], "Originate")
         self.assertEqual(payload["ActionID"], "action-1")
@@ -117,7 +126,7 @@ class TestWhatsAppCallingAMI(FrappeTestCase):
         self.assertEqual(payload["Timeout"], "45000")
         self.assertEqual(payload["Variable"], "WHATSAPP_CALL_ID=CALL-1")
 
-    def _ami_settings(self):
+    def _ami_settings(self) -> Any:
         settings = SimpleNamespace(
             ami_host="172.31.1.252",
             ami_port=5038,
@@ -131,7 +140,7 @@ class TestWhatsAppCallingAMI(FrappeTestCase):
         settings.get_password = lambda _fieldname: "test-ami-secret"
         return settings
 
-    def _ami_call(self):
+    def _ami_call(self) -> Any:
         return SimpleNamespace(
             name="CALL-1",
             phone_number="+12015550123",
@@ -284,14 +293,14 @@ class TestWhatsAppCallingAMI(FrappeTestCase):
 
     def test_default_calling_account_comes_from_permission_template(self):
         suffix = frappe.generate_hash(length=8)
-        default_outgoing = frappe.get_doc({
+        default_outgoing = cast("WhatsAppAccount", frappe.get_doc({
             "doctype": "WhatsApp Account",
             "account_name": f"Default Outgoing {suffix}",
             "status": "Active",
             "is_default_outgoing": 1,
             "phone_id": f"default-phone-{suffix}",
             "webhook_verify_token": f"default-verify-{suffix}",
-        }).insert(ignore_permissions=True)
+        }).insert(ignore_permissions=True))
         calling_account = frappe.get_doc({
             "doctype": "WhatsApp Account",
             "account_name": f"Calling Account {suffix}",
@@ -335,9 +344,9 @@ class TestWhatsAppCallingActions(FrappeTestCase):
         ]:
             frappe.reload_doc("frappe_whatsapp", "doctype", doctype)
 
-    def _create_account(self):
+    def _create_account(self) -> WhatsAppAccount:
         suffix = frappe.generate_hash(length=8)
-        return frappe.get_doc({
+        return cast("WhatsAppAccount", frappe.get_doc({
             "doctype": "WhatsApp Account",
             "account_name": f"Call Action Account {suffix}",
             "status": "Active",
@@ -345,7 +354,7 @@ class TestWhatsAppCallingActions(FrappeTestCase):
             "version": "v24.0",
             "phone_id": f"phone-{suffix}",
             "webhook_verify_token": f"verify-{suffix}",
-        }).insert(ignore_permissions=True)
+        }).insert(ignore_permissions=True))
 
     def _permission(
         self,
@@ -368,7 +377,7 @@ class TestWhatsAppCallingActions(FrappeTestCase):
                     "can_perform_action": can_start,
                 }],
             },
-            last_checked_at=frappe.utils.now_datetime(),
+            last_checked_at=now_datetime(),
         )
 
     def _service_patches(self, account, permission):
@@ -525,7 +534,10 @@ class TestWhatsAppCallingActions(FrappeTestCase):
             )
 
         mock_agent.assert_not_called()
-        call_doc = frappe.get_doc("WhatsApp Call", result["call"])
+        call_doc = cast(
+            "WhatsAppCall",
+            frappe.get_doc("WhatsApp Call", result["call"]),
+        )
         self.assertIsNone(call_doc.agent_user)
         self.assertEqual(call_doc.agent_extension, "9555")
         self.assertEqual(call_doc.action_type, "Permission Request")
@@ -759,7 +771,7 @@ class TestWhatsAppCallingActions(FrappeTestCase):
 
     def test_idempotency_key_cannot_be_reused_for_another_call(self):
         account = self._create_account()
-        existing = frappe.get_doc({
+        existing = cast("WhatsAppCall", frappe.get_doc({
             "doctype": "WhatsApp Call",
             "phone_number": "15551234576",
             "whatsapp_account": account.name,
@@ -767,7 +779,7 @@ class TestWhatsAppCallingActions(FrappeTestCase):
             "status": "PBX Queued",
             "action_type": "Outbound Call",
             "idempotency_key": "conflicting-call-key-1234",
-        }).insert(ignore_permissions=True)
+        }).insert(ignore_permissions=True))
 
         with (
             patch(
@@ -834,11 +846,14 @@ class TestWhatsAppCallingActions(FrappeTestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["status"], "Failed")
         self.assertTrue(result["retryable"])
-        call_doc = frappe.get_doc("WhatsApp Call", result["call"])
+        call_doc = cast(
+            "WhatsAppCall",
+            frappe.get_doc("WhatsApp Call", result["call"]),
+        )
         self.assertEqual(call_doc.status, "Failed")
         self.assertEqual(call_doc.agent_user, None)
         self.assertEqual(call_doc.agent_extension, "9002")
-        self.assertIn("AMI unavailable", call_doc.failure_reason)
+        self.assertIn("AMI unavailable", str(call_doc.failure_reason))
 
     @patch("frappe_whatsapp.utils.calling.publish_call_update")
     @patch("frappe_whatsapp.utils.calling._upsert_permission")
@@ -868,8 +883,10 @@ class TestWhatsAppCallingActions(FrappeTestCase):
         )
 
         _send_permission_template(
-            call_doc=call_doc,
-            settings=SimpleNamespace(call_permission_template="call-template"),
+            call_doc=cast(Any, call_doc),
+            settings=cast(
+                Any, SimpleNamespace(call_permission_template="call-template")
+            ),
         )
 
         message_values = mock_get_doc.call_args.args[0]
@@ -986,9 +1003,9 @@ class TestWhatsAppCallingWebhook(FrappeTestCase):
         ]:
             frappe.reload_doc("frappe_whatsapp", "doctype", doctype)
 
-    def _create_account(self):
+    def _create_account(self) -> WhatsAppAccount:
         suffix = frappe.generate_hash(length=8)
-        return frappe.get_doc({
+        return cast("WhatsAppAccount", frappe.get_doc({
             "doctype": "WhatsApp Account",
             "account_name": f"Calling Test Account {suffix}",
             "status": "Active",
@@ -997,10 +1014,12 @@ class TestWhatsAppCallingWebhook(FrappeTestCase):
             "version": "v24.0",
             "phone_id": f"phone-{suffix}",
             "webhook_verify_token": f"verify-{suffix}",
-        }).insert(ignore_permissions=True)
+        }).insert(ignore_permissions=True))
 
-    def _create_permission_request_message(self, account, phone):
-        return frappe.get_doc({
+    def _create_permission_request_message(
+        self, account: WhatsAppAccount, phone: str
+    ) -> WhatsAppMessage:
+        return cast("WhatsAppMessage", frappe.get_doc({
             "doctype": "WhatsApp Message",
             "type": "Outgoing",
             "to": phone,
@@ -1009,10 +1028,15 @@ class TestWhatsAppCallingWebhook(FrappeTestCase):
             "message": "",
             "message_id": f"wamid.{frappe.generate_hash(length=8)}",
             "whatsapp_account": account.name,
-        }).insert(ignore_permissions=True)
+        }).insert(ignore_permissions=True))
 
-    def _create_pending_call(self, account, phone, request_message):
-        return frappe.get_doc({
+    def _create_pending_call(
+        self,
+        account: WhatsAppAccount,
+        phone: str,
+        request_message: WhatsAppMessage,
+    ) -> WhatsAppCall:
+        return cast("WhatsAppCall", frappe.get_doc({
             "doctype": "WhatsApp Call",
             "phone_number": phone,
             "whatsapp_account": account.name,
@@ -1021,7 +1045,7 @@ class TestWhatsAppCallingWebhook(FrappeTestCase):
             "agent_extension": "1001",
             "status": "Permission Requested",
             "permission_request_message": request_message.name,
-        }).insert(ignore_permissions=True)
+        }).insert(ignore_permissions=True))
 
     @patch("frappe_whatsapp.utils.calling.publish_call_update")
     @patch("frappe_whatsapp.utils.calling.originate_call")
@@ -1037,7 +1061,7 @@ class TestWhatsAppCallingWebhook(FrappeTestCase):
 
         handle_call_permission_reply(
             contact_number=phone,
-            whatsapp_account_name=account.name,
+            whatsapp_account_name=str(account.name),
             response="accept",
             expiration_timestamp=int(time.time()) + 3600,
             response_source="user_action",
@@ -1047,9 +1071,12 @@ class TestWhatsAppCallingWebhook(FrappeTestCase):
 
         call_doc.reload()
         self.assertEqual(call_doc.status, "Permission Accepted")
-        permission = frappe.get_doc(
-            "WhatsApp Call Permission",
-            f"{phone}-{account.name}",
+        permission = cast(
+            "WhatsAppCallPermission",
+            frappe.get_doc(
+                "WhatsApp Call Permission",
+                f"{phone}-{account.name}",
+            ),
         )
         self.assertEqual(permission.permission_status, "Temporary")
         mock_enqueue.assert_not_called()
@@ -1072,7 +1099,7 @@ class TestWhatsAppCallingWebhook(FrappeTestCase):
 
         handle_call_permission_reply(
             contact_number=phone,
-            whatsapp_account_name=account.name,
+            whatsapp_account_name=str(account.name),
             response="reject",
             response_source="user_action",
             context_message_id=request_message.message_id,

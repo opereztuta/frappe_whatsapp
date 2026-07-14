@@ -6,7 +6,7 @@ import re
 import socket
 import ssl
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import frappe
 import requests
@@ -16,6 +16,14 @@ from frappe.utils.file_lock import LockTimeoutError
 from frappe.utils.synchronization import filelock
 
 from frappe_whatsapp.utils import get_whatsapp_account
+
+if TYPE_CHECKING:
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_account.whatsapp_account import WhatsAppAccount
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_call.whatsapp_call import WhatsAppCall
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_call_permission.whatsapp_call_permission import WhatsAppCallPermission
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_calling_settings.whatsapp_calling_settings import WhatsAppCallingSettings
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import WhatsAppMessage
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import WhatsAppTemplates
 
 
 CALL_UPDATE_EVENT = "whatsapp_call_update"
@@ -35,6 +43,22 @@ _IDEMPOTENCY_KEY_PATTERN = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,139}$",
     re.ASCII,
 )
+
+PermissionStatus = Literal[
+    "No Permission", "Temporary", "Permanent", "Rejected", "Expired", "Unknown"
+]
+
+
+class CallAgentRow(Protocol):
+    extension: str
+
+
+def _as_int(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, (int, float, str)):
+        return cint(value)
+    return 0
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -95,11 +119,16 @@ def validate_idempotency_key(idempotency_key: Any) -> str:
     return key
 
 
-def _get_settings():
-    return frappe.get_cached_doc("WhatsApp Calling Settings")
+def _get_settings() -> WhatsAppCallingSettings:
+    return cast(
+        "WhatsAppCallingSettings",
+        frappe.get_cached_doc("WhatsApp Calling Settings"),
+    )
 
 
-def _get_configured_calling_account(settings=None) -> str | None:
+def _get_configured_calling_account(
+    settings: WhatsAppCallingSettings | None = None,
+) -> str | None:
     settings = settings or _get_settings()
     template_name = getattr(settings, "call_permission_template", None)
     if not template_name:
@@ -113,13 +142,19 @@ def _get_configured_calling_account(settings=None) -> str | None:
     return str(account_name) if account_name else None
 
 
-def _get_account(whatsapp_account: str | None = None):
+def _get_account(whatsapp_account: str | None = None) -> WhatsAppAccount:
     if whatsapp_account:
-        return frappe.get_doc("WhatsApp Account", whatsapp_account)
+        return cast(
+            "WhatsAppAccount",
+            frappe.get_doc("WhatsApp Account", whatsapp_account),
+        )
 
     configured_calling_account = _get_configured_calling_account()
     if configured_calling_account:
-        return frappe.get_doc("WhatsApp Account", configured_calling_account)
+        return cast(
+            "WhatsAppAccount",
+            frappe.get_doc("WhatsApp Account", configured_calling_account),
+        )
 
     account = get_whatsapp_account(account_type="outgoing")
     if not account:
@@ -127,12 +162,15 @@ def _get_account(whatsapp_account: str | None = None):
             _("Please set a default outgoing WhatsApp Account."),
             title=_("WhatsApp Account Required"),
         )
-    return account
+        raise RuntimeError("WhatsApp Account is required")
+    return cast("WhatsAppAccount", account)
 
 
-def _ensure_enabled(settings=None):
+def _ensure_enabled(
+    settings: WhatsAppCallingSettings | None = None,
+) -> WhatsAppCallingSettings:
     settings = settings or _get_settings()
-    if not cint(settings.enabled):
+    if not settings.enabled:
         frappe.throw(
             _("WhatsApp calling is not enabled."),
             title=_("WhatsApp Calling Disabled"),
@@ -140,7 +178,9 @@ def _ensure_enabled(settings=None):
     return settings
 
 
-def _get_agent(user: str | None = None, *, throw: bool = True):
+def _get_agent(
+    user: str | None = None, *, throw: bool = True
+) -> CallAgentRow | None:
     user = user or frappe.session.user
     agent = frappe.db.get_all(
         "WhatsApp Call Agent",
@@ -149,7 +189,7 @@ def _get_agent(user: str | None = None, *, throw: bool = True):
         limit=1,
     )
     if agent:
-        return agent[0]
+        return cast(CallAgentRow, agent[0])
 
     if throw:
         frappe.throw(
@@ -201,7 +241,7 @@ def _normalize_permission_status(
     *,
     is_permanent: bool = False,
     expires_at: datetime | None = None,
-) -> str:
+) -> PermissionStatus:
     raw = str(raw_status or "").strip().lower()
     if raw in {"permanent", "permanent_permission"} or is_permanent:
         return "Permanent"
@@ -253,7 +293,7 @@ def parse_permission_state(payload: dict[str, Any] | None) -> dict[str, Any]:
     )
     expires_at = _timestamp_to_datetime(raw_expires)
     is_permanent = bool(
-        cint(state.get("is_permanent"))
+        _as_int(state.get("is_permanent"))
         or str(state.get("permission_type") or "").lower() == "permanent"
         or str(state.get("status") or "").lower() == "permanent"
     )
@@ -327,7 +367,10 @@ def _permission_state_is_fresh(permission: Any) -> bool:
     last_checked_at = getattr(permission, "last_checked_at", None)
     if not last_checked_at:
         return False
-    return get_datetime(last_checked_at) >= (
+    checked_at = get_datetime(last_checked_at)
+    if checked_at is None:
+        return False
+    return checked_at >= (
         now_datetime() - timedelta(seconds=CALL_PERMISSION_STATE_TTL_SECONDS)
     )
 
@@ -357,7 +400,7 @@ def _get_idempotent_call(
     phone_number: str,
     whatsapp_account: str,
     agent_extension: str,
-):
+) -> WhatsAppCall | None:
     if not idempotency_key:
         return None
 
@@ -369,7 +412,10 @@ def _get_idempotent_call(
     if not existing:
         return None
 
-    call_doc = frappe.get_doc("WhatsApp Call", existing)
+    call_doc = cast(
+        "WhatsAppCall",
+        frappe.get_doc("WhatsApp Call", str(existing)),
+    )
     expected = {
         "action_type": action_type,
         "phone_number": _normalize_phone_number(phone_number),
@@ -396,9 +442,9 @@ def _upsert_permission(
     whatsapp_account: str,
     phone_number: str,
     state: dict[str, Any],
-    last_requested_at=None,
+    last_requested_at: datetime | None = None,
     last_request_message: str | None = None,
-):
+) -> WhatsAppCallPermission:
     number = _normalize_phone_number(phone_number)
     existing = frappe.db.get_value(
         "WhatsApp Call Permission",
@@ -406,14 +452,26 @@ def _upsert_permission(
         "name",
     )
     if existing:
-        doc = frappe.get_doc("WhatsApp Call Permission", existing)
+        doc = cast(
+            "WhatsAppCallPermission",
+            frappe.get_doc("WhatsApp Call Permission", str(existing)),
+        )
     else:
-        doc = frappe.new_doc("WhatsApp Call Permission")
+        doc = cast(
+            "WhatsAppCallPermission",
+            frappe.new_doc("WhatsApp Call Permission"),
+        )
         doc.whatsapp_account = whatsapp_account
         doc.phone_number = number
 
-    doc.permission_status = state.get("permission_status") or "Unknown"
-    doc.is_permanent = cint(state.get("is_permanent"))
+    raw_status = str(state.get("permission_status") or "Unknown")
+    doc.permission_status = cast(
+        PermissionStatus,
+        raw_status if raw_status in ACTIVE_PERMISSION_STATUSES | {
+            "No Permission", "Rejected", "Expired", "Unknown"
+        } else "Unknown",
+    )
+    doc.is_permanent = _as_int(state.get("is_permanent"))
     doc.expires_at = state.get("expires_at")
     doc.response_source = state.get("response_source")
     doc.last_checked_at = now_datetime()
@@ -430,7 +488,9 @@ def _upsert_permission(
     return doc
 
 
-def get_local_permission(phone_number: str, whatsapp_account: str):
+def get_local_permission(
+    phone_number: str, whatsapp_account: str
+) -> WhatsAppCallPermission | None:
     number = _normalize_phone_number(phone_number)
     existing = frappe.db.get_value(
         "WhatsApp Call Permission",
@@ -440,20 +500,27 @@ def get_local_permission(phone_number: str, whatsapp_account: str):
     if not existing:
         return None
 
-    doc = frappe.get_doc("WhatsApp Call Permission", existing)
+    doc = cast(
+        "WhatsAppCallPermission",
+        frappe.get_doc("WhatsApp Call Permission", str(existing)),
+    )
     if doc.permission_status == "Temporary" and doc.expires_at:
-        if doc.expires_at <= now_datetime():
+        expires_at = get_datetime(doc.expires_at)
+        if expires_at and expires_at <= now_datetime():
             doc.permission_status = "Expired"
             doc.save(ignore_permissions=True)
     return doc
 
 
-def refresh_permission_state(phone_number: str, whatsapp_account: str | None = None):
+def refresh_permission_state(
+    phone_number: str, whatsapp_account: str | None = None
+) -> WhatsAppCallPermission:
     account = _get_account(whatsapp_account)
     number = _normalize_phone_number(phone_number)
     token = account.get_password("token")
     url = f"{account.url}/{account.version}/{account.phone_id}/call_permissions"
 
+    payload: dict[str, Any] = {}
     try:
         response = requests.get(
             url,
@@ -472,6 +539,7 @@ def refresh_permission_state(phone_number: str, whatsapp_account: str | None = N
             ),
             title=_("WhatsApp Calling Unavailable"),
         )
+        raise RuntimeError("Could not check WhatsApp call permission")
 
     state = parse_permission_state(payload if isinstance(payload, dict) else {})
     return _upsert_permission(
@@ -481,7 +549,9 @@ def refresh_permission_state(phone_number: str, whatsapp_account: str | None = N
     )
 
 
-def _find_pending_call(*, phone_number: str, whatsapp_account: str, contact: str | None = None):
+def _find_pending_call(
+    *, phone_number: str, whatsapp_account: str, contact: str | None = None
+) -> WhatsAppCall | None:
     filters: dict[str, Any] = {
         "phone_number": _normalize_phone_number(phone_number),
         "whatsapp_account": whatsapp_account,
@@ -494,7 +564,13 @@ def _find_pending_call(*, phone_number: str, whatsapp_account: str, contact: str
         order_by="creation desc",
         limit=1,
     )
-    return frappe.get_doc("WhatsApp Call", rows[0].name) if rows else None
+    return (
+        cast(
+            "WhatsAppCall",
+            frappe.get_doc("WhatsApp Call", str(rows[0].name)),
+        )
+        if rows else None
+    )
 
 
 def get_call_state(
@@ -506,7 +582,7 @@ def get_call_state(
     whatsapp_account: str | None = None,
 ) -> dict[str, Any]:
     settings = _get_settings()
-    if not cint(settings.enabled):
+    if not settings.enabled:
         return {
             "enabled": 0,
             "status": "Disabled",
@@ -556,7 +632,7 @@ def get_call_state(
                 permission = refresh_permission_state(number, account_name)
             except frappe.ValidationError:
                 return {
-                    "enabled": cint(settings.enabled),
+                    "enabled": int(bool(settings.enabled)),
                     "status": "Unavailable",
                     "message": _(
                         "Could not verify call permission with Meta. Try again shortly."
@@ -611,7 +687,7 @@ def get_call_state(
     )
 
     return {
-        "enabled": cint(settings.enabled),
+        "enabled": int(bool(settings.enabled)),
         "status": status,
         "message": message,
         "can_call": status == "Ready",
@@ -645,8 +721,8 @@ def _create_call(
     source_app: str | None = None,
     external_reference: str | None = None,
     idempotency_key: str | None = None,
-):
-    doc = frappe.get_doc({
+) -> WhatsAppCall:
+    doc = cast("WhatsAppCall", frappe.get_doc({
         "doctype": "WhatsApp Call",
         "phone_number": _normalize_phone_number(phone_number),
         "whatsapp_account": whatsapp_account,
@@ -659,12 +735,14 @@ def _create_call(
         "external_reference": external_reference,
         "idempotency_key": idempotency_key,
         "requested_at": now_datetime(),
-    })
+    }))
     doc.insert(ignore_permissions=True)
     return doc
 
 
-def _validate_call_permission_template(settings, account_name: str):
+def _validate_call_permission_template(
+    settings: WhatsAppCallingSettings, account_name: str
+) -> WhatsAppTemplates:
     template_name = settings.call_permission_template
     if not template_name:
         frappe.throw(
@@ -672,14 +750,17 @@ def _validate_call_permission_template(settings, account_name: str):
             title=_("Call Permission Template Required"),
         )
 
-    template = frappe.get_doc("WhatsApp Templates", template_name)
-    if not cint(template.get("is_call_permission_request")):
+    template = cast(
+        "WhatsAppTemplates",
+        frappe.get_doc("WhatsApp Templates", str(template_name)),
+    )
+    if not template.is_call_permission_request:
         frappe.throw(
             _("The configured template is not marked as a call-permission request."),
             title=_("Invalid Call Permission Template"),
         )
 
-    template_account = str(template.get("whatsapp_account") or "")
+    template_account = str(template.whatsapp_account or "")
     if template_account and template_account != account_name:
         frappe.throw(
             _("The call-permission template belongs to WhatsApp Account {0}.").format(
@@ -691,9 +772,11 @@ def _validate_call_permission_template(settings, account_name: str):
     return template
 
 
-def _send_permission_template(*, call_doc, settings):
+def _send_permission_template(
+    *, call_doc: WhatsAppCall, settings: WhatsAppCallingSettings
+) -> dict[str, Any]:
     template = _validate_call_permission_template(settings, call_doc.whatsapp_account)
-    message_doc = frappe.get_doc({
+    message_doc = cast("WhatsAppMessage", frappe.get_doc({
         "doctype": "WhatsApp Message",
         "to": call_doc.phone_number,
         "type": "Outgoing",
@@ -704,7 +787,7 @@ def _send_permission_template(*, call_doc, settings):
         "whatsapp_account": call_doc.whatsapp_account,
         "source_app": call_doc.source_app,
         "external_reference": call_doc.external_reference,
-    })
+    }))
     message_doc.insert(ignore_permissions=True)
 
     call_doc.permission_request_message = message_doc.name
@@ -735,7 +818,9 @@ def _send_permission_template(*, call_doc, settings):
     }
 
 
-def _permission_request_replay_result(call_doc) -> dict[str, Any]:
+def _permission_request_replay_result(
+    call_doc: WhatsAppCall,
+) -> dict[str, Any]:
     waiting = call_doc.status == "Permission Requested"
     return {
         "ok": call_doc.status not in {"Failed", "Permission Rejected"},
@@ -909,7 +994,9 @@ def request_call_permission(
         }
 
 
-def _outbound_call_result(call_doc, *, replay: bool = False) -> dict[str, Any]:
+def _outbound_call_result(
+    call_doc: WhatsAppCall, *, replay: bool = False
+) -> dict[str, Any]:
     queued = call_doc.status == "PBX Queued"
     result = {
         "ok": queued,
@@ -1066,9 +1153,14 @@ def _safe_format(template: str, values: dict[str, str], *, label: str) -> str:
             _("{0} has an invalid placeholder: {1}").format(label, exc),
             title=_("Invalid Calling Settings"),
         )
+        raise RuntimeError(f"Invalid {label}")
 
 
-def _build_originate_payload(settings, call_doc, action_id: str) -> dict[str, str]:
+def _build_originate_payload(
+    settings: WhatsAppCallingSettings,
+    call_doc: WhatsAppCall,
+    action_id: str,
+) -> dict[str, str]:
     number = _normalize_phone_number(call_doc.phone_number)
     extension = validate_agent_extension(call_doc.agent_extension)
     values = {
@@ -1086,7 +1178,7 @@ def _build_originate_payload(settings, call_doc, action_id: str) -> dict[str, st
         values,
         label=_("Destination Number Template"),
     )
-    timeout_ms = max(cint(settings.originate_timeout) or 30, 1) * 1000
+    timeout_ms = max(int(settings.originate_timeout or 30), 1) * 1000
 
     return {
         "Action": "Originate",
@@ -1172,24 +1264,32 @@ def _require_ami_success(
         )
 
 
-def _send_ami_originate(settings, call_doc, action_id: str) -> dict[str, str]:
+def _send_ami_originate(
+    settings: WhatsAppCallingSettings,
+    call_doc: WhatsAppCall,
+    action_id: str,
+) -> dict[str, str]:
     if not settings.ami_host:
         frappe.throw(_("AMI Host is required."), title=_("Invalid Calling Settings"))
     if not settings.ami_username:
         frappe.throw(_("AMI Username is required."), title=_("Invalid Calling Settings"))
 
-    password = settings.get_password("ami_password")
-    if not password:
+    raw_password = settings.get_password("ami_password")
+    if not raw_password:
         frappe.throw(_("AMI Password is required."), title=_("Invalid Calling Settings"))
+        raise RuntimeError("AMI Password is required")
+    password = str(raw_password)
 
-    timeout = max(cint(settings.originate_timeout) or 30, 1)
+    timeout = max(int(settings.originate_timeout or 30), 1)
     raw_sock = socket.create_connection(
-        (settings.ami_host, cint(settings.ami_port) or 5038),
+        (str(settings.ami_host), int(settings.ami_port or 5038)),
         timeout=timeout,
     )
     sock = (
-        ssl.create_default_context().wrap_socket(raw_sock, server_hostname=settings.ami_host)
-        if cint(settings.ami_use_tls)
+        ssl.create_default_context().wrap_socket(
+            raw_sock, server_hostname=str(settings.ami_host)
+        )
+        if settings.ami_use_tls
         else raw_sock
     )
     sock.settimeout(timeout)
@@ -1199,7 +1299,7 @@ def _send_ami_originate(settings, call_doc, action_id: str) -> dict[str, str]:
 
         login_response = _send_ami_action(sock, {
             "Action": "Login",
-            "Username": settings.ami_username,
+            "Username": str(settings.ami_username),
             "Secret": password,
             "Events": "off",
         })
@@ -1231,7 +1331,9 @@ def _send_ami_originate(settings, call_doc, action_id: str) -> dict[str, str]:
             pass
 
 
-def originate_call(call_doc, *, raise_on_failure: bool = False):
+def originate_call(
+    call_doc: WhatsAppCall, *, raise_on_failure: bool = False
+) -> WhatsAppCall:
     settings = _ensure_enabled()
     action_id = f"whatsapp-call-{frappe.generate_hash(length=10)}"
     try:
@@ -1256,8 +1358,10 @@ def originate_call(call_doc, *, raise_on_failure: bool = False):
         return call_doc
 
 
-def originate_pending_call(call_name: str):
-    call_doc = frappe.get_doc("WhatsApp Call", call_name)
+def originate_pending_call(call_name: str) -> WhatsAppCall:
+    call_doc = cast(
+        "WhatsAppCall", frappe.get_doc("WhatsApp Call", call_name)
+    )
     if call_doc.status in TERMINAL_CALL_STATUSES:
         return call_doc
     return originate_call(call_doc, raise_on_failure=False)
@@ -1268,7 +1372,7 @@ def _find_call_from_permission_reply(
     phone_number: str,
     whatsapp_account: str,
     context_message_id: str | None = None,
-):
+) -> WhatsAppCall | None:
     request_docname = None
     if context_message_id:
         request_docname = frappe.db.get_value(
@@ -1293,7 +1397,10 @@ def _find_call_from_permission_reply(
         limit=1,
     )
     if rows:
-        return frappe.get_doc("WhatsApp Call", rows[0].name)
+        return cast(
+            "WhatsAppCall",
+            frappe.get_doc("WhatsApp Call", str(rows[0].name)),
+        )
 
     if request_docname:
         rows = frappe.get_all(
@@ -1308,7 +1415,10 @@ def _find_call_from_permission_reply(
             limit=1,
         )
         if rows:
-            return frappe.get_doc("WhatsApp Call", rows[0].name)
+            return cast(
+                "WhatsAppCall",
+                frappe.get_doc("WhatsApp Call", str(rows[0].name)),
+            )
 
     return None
 
@@ -1376,7 +1486,7 @@ def handle_call_permission_reply(
         publish_call_update(call_doc, _("Call permission was not accepted."))
 
 
-def publish_call_update(call_doc, message: str):
+def publish_call_update(call_doc: WhatsAppCall, message: str) -> None:
     payload = {
         "event_type": "whatsapp_call_update",
         "room": call_doc.contact,

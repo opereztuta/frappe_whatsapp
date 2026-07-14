@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import frappe
 from frappe import _
-from frappe.utils import cint
 
 from frappe_whatsapp.utils.calling import (
     get_call_state as get_service_call_state,
@@ -20,6 +19,11 @@ from frappe_whatsapp.utils.calling import (
     validate_call_phone_number,
     validate_idempotency_key,
 )
+
+if TYPE_CHECKING:
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_call_permission.whatsapp_call_permission import (
+        WhatsAppCallPermission,
+    )
 
 
 CALLING_API_ROLE = "WhatsApp Calling API"
@@ -37,6 +41,14 @@ _STATUS_MAP = {
     "Cancelled": "failed",
 }
 _MAX_EXTERNAL_REFERENCE_LENGTH = 140
+
+
+def _is_enabled(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return False
 
 
 def _require_calling_api_role() -> None:
@@ -94,7 +106,7 @@ def _validate_client_context(
         )
 
     app_enabled = frappe.db.get_value("WhatsApp Client App", app_name, "enabled")
-    if not cint(app_enabled):
+    if not _is_enabled(app_enabled):
         frappe.throw(
             _("WhatsApp Client App {0} does not exist or is not enabled.").format(
                 app_name
@@ -126,7 +138,10 @@ def _permission_metadata(*, phone_number: str, whatsapp_account: str) -> dict[st
             "expires_at": None,
             "last_checked_at": None,
         }
-    permission = frappe.get_doc("WhatsApp Call Permission", name)
+    permission = cast(
+        "WhatsAppCallPermission",
+        frappe.get_doc("WhatsApp Call Permission", str(name)),
+    )
     return {
         "status": permission.permission_status,
         "expires_at": permission.expires_at,
