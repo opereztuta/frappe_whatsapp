@@ -2,6 +2,7 @@
 
 # Copyright (c) 2022, Shridhar Patil and contributors
 # For license information, please see license.txt
+import hashlib
 import os
 import re
 import frappe
@@ -23,6 +24,8 @@ _ALLOWED_CATEGORY = {
     "", "TRANSACTIONAL", "MARKETING", "OTP", "UTILITY", "AUTHENTICATION"
 }
 _ALLOWED_HEADER_TYPE = {"", "TEXT", "DOCUMENT", "IMAGE"}
+_MAX_DOCUMENT_NAME_LENGTH = 140
+_DOCUMENT_NAME_HASH_LENGTH = 12
 
 # Categories that do not require opt-in by default
 _NON_MARKETING_CATEGORIES = frozenset(
@@ -111,6 +114,19 @@ class WhatsAppTemplates(Document):
         whatsapp_account: DF.Link | None
     # end: auto-generated types
     """Create whatsapp template."""
+
+    def autoname(self):
+        self.set_whatsapp_account()
+        if not self.language_code:
+            lang_code = str(
+                frappe.db.get_value("Language", self.language) or "en")
+            self.language_code = lang_code.replace("-", "_")
+
+        self.name = _build_template_docname(
+            self.actual_name or self.template_name,
+            self.language_code,
+            self.whatsapp_account,
+        )
 
     def validate(self):
         # printing self for easier debugging in case of errors during
@@ -621,6 +637,29 @@ def _normalize_meta_language_code(value: Any) -> str:
     return str(value or "").strip().replace("-", "_")
 
 
+def _build_template_docname(
+    template_name: Any,
+    language_code: Any,
+    whatsapp_account: Any,
+) -> str:
+    """Build a stable, account-aware name within Frappe's 140-char limit."""
+    parts = [
+        str(template_name or "").strip(),
+        _normalize_meta_language_code(language_code),
+        str(whatsapp_account or "").strip(),
+    ]
+    full_name = "-".join(part for part in parts if part)
+    if len(full_name) <= _MAX_DOCUMENT_NAME_LENGTH:
+        return full_name
+
+    digest = hashlib.sha256(full_name.encode("utf-8")).hexdigest()[
+        :_DOCUMENT_NAME_HASH_LENGTH
+    ]
+    prefix_length = _MAX_DOCUMENT_NAME_LENGTH - len(digest) - 1
+    prefix = full_name[:prefix_length].rstrip("-")
+    return f"{prefix}-{digest}"
+
+
 def _resolve_language_link(value: Any) -> str:
     """Resolve a Meta language code to the corresponding Language docname."""
     language = str(value or "").strip()
@@ -720,10 +759,17 @@ def fetch(whatsapp_account: str | None = None) -> str:
                 if not template_name:
                     continue
 
+                meta_language = str(template.get("language") or "")
+                language_code = _normalize_meta_language_code(meta_language)
+
                 # load or create
                 existing_name = frappe.db.get_value(
                     "WhatsApp Templates",
-                    {"actual_name": template_name},
+                    {
+                        "actual_name": template_name,
+                        "language_code": language_code,
+                        "whatsapp_account": account_name,
+                    },
                     "name",
                 )
                 if existing_name:
@@ -739,6 +785,11 @@ def fetch(whatsapp_account: str | None = None) -> str:
                         frappe.new_doc("WhatsApp Templates"))
                     doc.template_name = template_name
                     doc.actual_name = template_name
+                    doc.name = _build_template_docname(
+                        template_name,
+                        language_code,
+                        account_name,
+                    )
 
                 # Reset fields that are fully managed by Meta sync so removed
                 # components do not leave stale local values behind.
@@ -750,10 +801,8 @@ def fetch(whatsapp_account: str | None = None) -> str:
                 doc.set("buttons", [])
 
                 # status/language/id (these are simple Data fields)
-                meta_language = str(template.get("language") or "")
                 doc.status = str(template.get("status") or "")
-                doc.language_code = _normalize_meta_language_code(
-                    meta_language)
+                doc.language_code = language_code
                 doc.language = _resolve_language_link(meta_language)
                 doc.id = str(template.get("id") or "")
                 doc.whatsapp_account = account_name
