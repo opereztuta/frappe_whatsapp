@@ -16,6 +16,7 @@ from frappe.utils import get_bench_path, get_site_base_path
 from typing import Any, Mapping, cast
 
 from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_account.whatsapp_account import (
+    WhatsAppAccount,
     validate_account_connection,
 )
 from frappe_whatsapp.utils.meta import get_paginated_data
@@ -701,8 +702,12 @@ def fetch(whatsapp_account: str | None = None) -> str:
     """Fetch templates from Meta and upsert into WhatsApp Templates."""
     frappe.only_for("System Manager")
 
+    whatsapp_accounts: list[WhatsAppAccount]
     if whatsapp_account:
-        selected = frappe.get_doc("WhatsApp Account", whatsapp_account)
+        selected = cast(
+            WhatsAppAccount,
+            frappe.get_doc("WhatsApp Account", whatsapp_account),
+        )
         selected.check_permission("read")
         if selected.status != "Active":
             frappe.throw(
@@ -713,7 +718,10 @@ def fetch(whatsapp_account: str | None = None) -> str:
         whatsapp_accounts = [selected]
     else:
         whatsapp_accounts = [
-            frappe.get_doc("WhatsApp Account", row.name)
+            cast(
+                WhatsAppAccount,
+                frappe.get_doc("WhatsApp Account", str(row.name)),
+            )
             for row in frappe.get_all(
                 "WhatsApp Account",
                 filters={"status": "Active"},

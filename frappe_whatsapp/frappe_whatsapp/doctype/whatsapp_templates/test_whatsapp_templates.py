@@ -137,7 +137,10 @@ class TestTemplateMetaSync(FrappeTestCase):
             "name",
         )
         self.assertTrue(template_name)
-        template = frappe.get_doc("WhatsApp Templates", template_name)
+        template = cast(
+            WhatsAppTemplates,
+            frappe.get_doc("WhatsApp Templates", str(template_name)),
+        )
         self.assertEqual(template.whatsapp_account, account.name)
         self.assertEqual(template.status, "APPROVED")
         self.assertEqual(template.language_code, "en_US")
