@@ -10,6 +10,7 @@ from frappe_whatsapp.utils.routing import (
     serialize_incoming_message_for_forwarding,
 )
 from frappe_whatsapp.utils.webhook import (
+    _format_shared_contacts,
     _process_incoming_message,
     get_media_file_extension,
     normalize_media_mime_type,
@@ -68,6 +69,97 @@ class TestRouting(FrappeTestCase):
         )
 
         self.assertEqual(payload["profile_name"], "Jane Sender")
+
+    def test_format_shared_contacts_includes_readable_structured_details(self):
+        summary = _format_shared_contacts([
+            {
+                "name": {
+                    "formatted_name": "Ana Vera Mamá ❤️",
+                    "first_name": "Ana",
+                    "last_name": "Vera",
+                },
+                "phones": [
+                    {
+                        "phone": "+1 (201) 970-9401",
+                        "wa_id": "12019709401",
+                        "type": "CELL",
+                    },
+                    {
+                        "phone": "+1 (201) 970-9401",
+                        "type": "WORK",
+                    },
+                    {"wa_id": "573115631239"},
+                ],
+                "emails": [
+                    {"email": "ana@example.com", "type": "WORK"},
+                    {"email": "ana@example.com", "type": "HOME"},
+                ],
+                "org": {
+                    "company": "Zoni",
+                    "department": "Admissions",
+                    "title": "Advisor",
+                },
+                "addresses": [
+                    {
+                        "street": "123 Main St",
+                        "city": "Miami",
+                        "state": "FL",
+                        "zip": "33101",
+                        "country": "United States",
+                        "type": "WORK",
+                    }
+                ],
+                "urls": [{"url": "https://example.com", "type": "WORK"}],
+                "birthday": "1990-01-02",
+                "vcard": "base64-data-that-must-not-be-rendered",
+                "origin": "other",
+            },
+            {
+                "name": {
+                    "prefix": "Dr.",
+                    "first_name": "José",
+                    "middle_name": "Luis",
+                    "last_name": "Pérez",
+                    "suffix": "Jr.",
+                },
+                "phones": [{"phone": "+57 311 5631239"}],
+            },
+        ])
+
+        self.assertEqual(
+            summary,
+            (
+                "Shared contacts (2)\n\n"
+                "Contact 1\n"
+                "Name: Ana Vera Mamá ❤️\n"
+                "Phone (CELL): +1 (201) 970-9401\n"
+                "Phone: 573115631239\n"
+                "Email (WORK): ana@example.com\n"
+                "Organization: Zoni — Admissions — Advisor\n"
+                "Address (WORK): 123 Main St, Miami, FL, 33101, "
+                "United States\n"
+                "URL (WORK): https://example.com\n"
+                "Birthday: 1990-01-02\n\n"
+                "Contact 2\n"
+                "Name: Dr. José Luis Pérez Jr.\n"
+                "Phone: +57 311 5631239"
+            ),
+        )
+        self.assertNotIn("base64-data", summary)
+        self.assertNotIn("origin", summary)
+
+    def test_format_shared_contacts_handles_empty_and_partial_payloads(self):
+        fallback = (
+            "A contact was shared, but no readable contact details "
+            "were provided."
+        )
+        self.assertEqual(_format_shared_contacts(None), fallback)
+        self.assertEqual(_format_shared_contacts([]), fallback)
+        self.assertEqual(_format_shared_contacts(["invalid"]), fallback)
+        self.assertEqual(
+            _format_shared_contacts([{"name": None, "phones": "invalid"}]),
+            "Shared contact\n\nName: Unnamed contact",
+        )
 
     @patch("frappe_whatsapp.utils.routing._mark_incoming_message_forwarded")
     @patch("frappe_whatsapp.utils.routing.make_post_request")
@@ -208,6 +300,80 @@ class TestRouting(FrappeTestCase):
         mock_forward_async.assert_called_once_with(
             incoming_message_name=str(message_doc.name)
         )
+
+    @patch("frappe_whatsapp.utils.webhook._enqueue_language_detection")
+    @patch("frappe_whatsapp.utils.webhook._handle_consent_keywords")
+    @patch("frappe_whatsapp.utils.webhook.forward_incoming_to_app_async")
+    def test_process_incoming_contacts_normalizes_inserts_and_forwards_once(
+        self,
+        mock_forward_async,
+        mock_handle_consent,
+        mock_enqueue_language,
+    ):
+        frappe.reload_doc("frappe_whatsapp", "doctype", "whatsapp_message")
+        app = self._create_client_app()
+        account = self._create_account(whatsapp_client_app=app.name)
+        message_id = f"wamid.{frappe.generate_hash(length=8)}"
+        message = {
+            "id": message_id,
+            "from": "+15551234567",
+            "type": "contacts",
+            "contacts": [
+                {
+                    "name": {"formatted_name": "Ana Vera Mamá ❤️"},
+                    "phones": [
+                        {
+                            "phone": "+1 (201) 970-9401",
+                            "wa_id": "12019709401",
+                        }
+                    ],
+                },
+                {
+                    "name": {"first_name": "José", "last_name": "Pérez"},
+                    "emails": [{"email": "jose@example.com"}],
+                },
+            ],
+        }
+
+        _process_incoming_message(
+            message=message,
+            whatsapp_account=account,
+            sender_profile_name="Jane Sender",
+        )
+        _process_incoming_message(
+            message=message,
+            whatsapp_account=account,
+            sender_profile_name="Jane Sender",
+        )
+
+        message_names = frappe.get_all(
+            "WhatsApp Message",
+            filters={"message_id": message_id},
+            pluck="name",
+        )
+        self.assertEqual(len(message_names), 1)
+
+        message_doc = frappe.get_doc("WhatsApp Message", message_names[0])
+        self.assertEqual(message_doc.content_type, "contact")
+        self.assertEqual(message_doc.profile_name, "Jane Sender")
+        self.assertEqual(message_doc.routed_app, app.name)
+        self.assertEqual(
+            message_doc.message,
+            (
+                "Shared contacts (2)\n\n"
+                "Contact 1\n"
+                "Name: Ana Vera Mamá ❤️\n"
+                "Phone: +1 (201) 970-9401\n\n"
+                "Contact 2\n"
+                "Name: José Pérez\n"
+                "Email: jose@example.com"
+            ),
+        )
+        mock_forward_async.assert_called_once_with(
+            incoming_message_name=str(message_doc.name)
+        )
+        mock_handle_consent.assert_not_called()
+        mock_enqueue_language.assert_not_called()
 
     @patch("frappe_whatsapp.utils.webhook._handle_consent_keywords")
     @patch("frappe_whatsapp.utils.webhook.forward_incoming_to_app_async")
