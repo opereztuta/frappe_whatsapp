@@ -49,6 +49,163 @@ DEFAULT_MEDIA_EXTENSION_BY_TYPE = {
 }
 
 
+def _normalize_contact_text(value: Any) -> str | None:
+    if value is None:
+        return None
+
+    normalized = " ".join(str(value).split())
+    return normalized or None
+
+
+def _contact_display_name(contact: dict[str, Any]) -> str:
+    name = contact.get("name")
+    if not isinstance(name, dict):
+        return "Unnamed contact"
+
+    formatted_name = _normalize_contact_text(name.get("formatted_name"))
+    if formatted_name:
+        return formatted_name
+
+    name_parts = [
+        _normalize_contact_text(name.get(fieldname))
+        for fieldname in (
+            "prefix",
+            "first_name",
+            "middle_name",
+            "last_name",
+            "suffix",
+        )
+    ]
+    return " ".join(part for part in name_parts if part) or "Unnamed contact"
+
+
+def _append_contact_items(
+    lines: list[str],
+    *,
+    items: Any,
+    value_field: str,
+    label: str,
+    fallback_field: str | None = None,
+) -> None:
+    if not isinstance(items, list):
+        return
+
+    seen_values: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        value = _normalize_contact_text(item.get(value_field))
+        if not value and fallback_field:
+            value = _normalize_contact_text(item.get(fallback_field))
+        if not value or value in seen_values:
+            continue
+
+        seen_values.add(value)
+        item_type = _normalize_contact_text(item.get("type"))
+        item_label = f"{label} ({item_type})" if item_type else label
+        lines.append(f"{item_label}: {value}")
+
+
+def _format_contact_address(address: dict[str, Any]) -> str | None:
+    parts = [
+        _normalize_contact_text(address.get(fieldname))
+        for fieldname in ("street", "city", "state", "zip")
+    ]
+    country = (
+        _normalize_contact_text(address.get("country"))
+        or _normalize_contact_text(address.get("country_code"))
+    )
+    parts.append(country)
+    return ", ".join(part for part in parts if part) or None
+
+
+def _format_shared_contacts(contacts: Any) -> str:
+    """Return a readable summary for a Meta ``contacts`` message."""
+    if not isinstance(contacts, list):
+        contacts = []
+
+    valid_contacts = [
+        contact for contact in contacts if isinstance(contact, dict)
+    ]
+    if not valid_contacts:
+        return (
+            "A contact was shared, but no readable contact details "
+            "were provided."
+        )
+
+    heading = (
+        "Shared contact"
+        if len(valid_contacts) == 1
+        else f"Shared contacts ({len(valid_contacts)})"
+    )
+    sections: list[str] = []
+
+    for index, contact in enumerate(valid_contacts, start=1):
+        lines: list[str] = []
+        if len(valid_contacts) > 1:
+            lines.append(f"Contact {index}")
+        lines.append(f"Name: {_contact_display_name(contact)}")
+
+        _append_contact_items(
+            lines,
+            items=contact.get("phones"),
+            value_field="phone",
+            fallback_field="wa_id",
+            label="Phone",
+        )
+        _append_contact_items(
+            lines,
+            items=contact.get("emails"),
+            value_field="email",
+            label="Email",
+        )
+
+        organization = contact.get("org")
+        if isinstance(organization, dict):
+            organization_parts = [
+                _normalize_contact_text(organization.get(fieldname))
+                for fieldname in ("company", "department", "title")
+            ]
+            organization_text = " — ".join(
+                part for part in organization_parts if part
+            )
+            if organization_text:
+                lines.append(f"Organization: {organization_text}")
+
+        addresses = contact.get("addresses")
+        if isinstance(addresses, list):
+            seen_addresses: set[str] = set()
+            for address in addresses:
+                if not isinstance(address, dict):
+                    continue
+                address_text = _format_contact_address(address)
+                if not address_text or address_text in seen_addresses:
+                    continue
+                seen_addresses.add(address_text)
+                address_type = _normalize_contact_text(address.get("type"))
+                address_label = (
+                    f"Address ({address_type})"
+                    if address_type else "Address"
+                )
+                lines.append(f"{address_label}: {address_text}")
+
+        _append_contact_items(
+            lines,
+            items=contact.get("urls"),
+            value_field="url",
+            label="URL",
+        )
+
+        birthday = _normalize_contact_text(contact.get("birthday"))
+        if birthday:
+            lines.append(f"Birthday: {birthday}")
+
+        sections.append("\n".join(lines))
+
+    return f"{heading}\n\n" + "\n\n".join(sections)
+
+
 def normalize_media_mime_type(mime_type: str | None) -> str:
     """Return a lower-case MIME value without parameters."""
     if not mime_type:
@@ -510,6 +667,26 @@ def _process_incoming_message(
                 message_type=message_type,
                 enqueue_after_commit=True
             )
+
+    elif message_type == "contacts":
+        body_text = _format_shared_contacts(message.get("contacts"))
+        doc = frappe.get_doc({
+            "doctype": "WhatsApp Message",
+            "type": "Incoming",
+            "from": message.get("from"),
+            "message_id": msg_id,
+            "reply_to_message_id": reply_to_message_id,
+            "is_reply": is_reply,
+            "message": body_text,
+            "content_type": "contact",
+            "profile_name": sender_profile_name,
+            "whatsapp_account": whatsapp_account.name,
+            "routed_app": routed_app,
+        }).insert(ignore_permissions=True)
+
+        # Contact-card data is not sender-authored conversational text. Do not
+        # use it for consent keyword matching or profile language detection.
+        forward_incoming_to_app_async(incoming_message_name=str(doc.name))
 
     else:
         raw_body = message.get(message_type)
