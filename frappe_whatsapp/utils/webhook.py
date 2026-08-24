@@ -48,6 +48,75 @@ DEFAULT_MEDIA_EXTENSION_BY_TYPE = {
     "video": "mp4",
 }
 
+_UNSUPPORTED_INCOMING_MESSAGE_TYPES = frozenset({"unsupported", "unknown"})
+
+
+def _normalize_unsupported_log_value(
+    value: Any,
+    *,
+    max_length: int = 500,
+) -> str | None:
+    if value is None:
+        return None
+
+    normalized = " ".join(str(value).split())
+    if not normalized:
+        return None
+    return normalized[:max_length]
+
+
+def _log_unsupported_incoming_message(
+    *,
+    message: dict,
+    whatsapp_account: Any,
+) -> None:
+    unsupported = message.get("unsupported")
+    if not isinstance(unsupported, dict):
+        unsupported = {}
+
+    raw_errors = message.get("errors")
+    if isinstance(raw_errors, dict):
+        raw_errors = [raw_errors]
+    elif not isinstance(raw_errors, list):
+        raw_errors = []
+
+    errors = []
+    for raw_error in raw_errors:
+        if not isinstance(raw_error, dict):
+            continue
+
+        error_data = raw_error.get("error_data")
+        details = (
+            error_data.get("details")
+            if isinstance(error_data, dict)
+            else raw_error.get("details")
+        )
+        errors.append({
+            "code": _normalize_unsupported_log_value(
+                raw_error.get("code"), max_length=50),
+            "title": _normalize_unsupported_log_value(
+                raw_error.get("title"), max_length=200),
+            "details": _normalize_unsupported_log_value(details),
+        })
+
+    diagnostics = {
+        "message_id": _normalize_unsupported_log_value(
+            message.get("id"), max_length=200),
+        "whatsapp_account": _normalize_unsupported_log_value(
+            getattr(whatsapp_account, "name", None), max_length=200),
+        "message_type": _normalize_unsupported_log_value(
+            message.get("type"), max_length=50),
+        "unsupported_type": _normalize_unsupported_log_value(
+            unsupported.get("type"), max_length=100),
+        "raw_type": _normalize_unsupported_log_value(
+            unsupported.get("raw_type"), max_length=100),
+        "errors": errors,
+    }
+    frappe.logger("frappe_whatsapp").warning(
+        "Unsupported WhatsApp message skipped: "
+        f"{json.dumps(diagnostics, ensure_ascii=True)}"
+    )
+
 
 def _normalize_contact_text(value: Any) -> str | None:
     if value is None:
@@ -539,12 +608,22 @@ def _process_incoming_message(
             contact_number=contact_number):
         return
 
+    message_type = message.get("type")
+    if (
+        isinstance(message_type, str)
+        and message_type in _UNSUPPORTED_INCOMING_MESSAGE_TYPES
+    ):
+        _log_unsupported_incoming_message(
+            message=message,
+            whatsapp_account=whatsapp_account,
+        )
+        return
+
     routed_app = resolve_incoming_routed_app(
         whatsapp_account=str(whatsapp_account.name),
         contact_number=contact_number
     )
 
-    message_type = message.get("type")
     context = message.get("context")
     context_id = context.get("id") if isinstance(context, dict) else None
 

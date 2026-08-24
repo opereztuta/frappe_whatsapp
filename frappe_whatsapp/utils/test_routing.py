@@ -301,6 +301,134 @@ class TestRouting(FrappeTestCase):
             incoming_message_name=str(message_doc.name)
         )
 
+    def test_process_incoming_unsupported_message_is_logged_and_skipped(self):
+        message = {
+            "from": "19293461149",
+            "from_user_id": "US.1033196179544075",
+            "id": "wamid.unsupported-production-shape",
+            "type": "unsupported",
+            "unsupported": {
+                "type": "unknown",
+                "raw_type": "unknown",
+            },
+            "errors": [{
+                "code": 131051,
+                "title": "Message type unknown",
+                "error_data": {
+                    "details": "Message type is currently not supported.",
+                },
+            }],
+        }
+        account = frappe._dict({"name": "Test WhatsApp Account"})
+
+        with (
+            patch(
+                "frappe_whatsapp.utils.webhook.is_contact_blocked",
+                return_value=False,
+            ),
+            patch(
+                "frappe_whatsapp.utils.webhook.resolve_incoming_routed_app"
+            ) as mock_resolve_route,
+            patch(
+                "frappe_whatsapp.utils.webhook.frappe.get_doc"
+            ) as mock_get_doc,
+            patch(
+                "frappe_whatsapp.utils.webhook.frappe.enqueue"
+            ) as mock_enqueue,
+            patch(
+                "frappe_whatsapp.utils.webhook._handle_consent_keywords"
+            ) as mock_handle_consent,
+            patch(
+                "frappe_whatsapp.utils.webhook._enqueue_language_detection"
+            ) as mock_enqueue_language,
+            patch(
+                "frappe_whatsapp.utils.webhook.forward_incoming_to_app_async"
+            ) as mock_forward_async,
+            patch(
+                "frappe_whatsapp.utils.webhook.frappe.logger"
+            ) as mock_logger,
+        ):
+            _process_incoming_message(
+                message=message,
+                whatsapp_account=account,
+                sender_profile_name="Sensitive Sender Name",
+            )
+
+        mock_resolve_route.assert_not_called()
+        mock_get_doc.assert_not_called()
+        mock_enqueue.assert_not_called()
+        mock_handle_consent.assert_not_called()
+        mock_enqueue_language.assert_not_called()
+        mock_forward_async.assert_not_called()
+        mock_logger.assert_called_once_with("frappe_whatsapp")
+
+        warning = mock_logger.return_value.warning
+        warning.assert_called_once()
+        warning_message = warning.call_args.args[0]
+        self.assertIn("wamid.unsupported-production-shape", warning_message)
+        self.assertIn("Test WhatsApp Account", warning_message)
+        self.assertIn('"message_type": "unsupported"', warning_message)
+        self.assertIn('"unsupported_type": "unknown"', warning_message)
+        self.assertIn('"raw_type": "unknown"', warning_message)
+        self.assertIn('"code": "131051"', warning_message)
+        self.assertIn("Message type unknown", warning_message)
+        self.assertIn(
+            "Message type is currently not supported.", warning_message
+        )
+        self.assertNotIn("19293461149", warning_message)
+        self.assertNotIn("US.1033196179544075", warning_message)
+        self.assertNotIn("Sensitive Sender Name", warning_message)
+
+    def test_process_incoming_legacy_unknown_with_malformed_metadata_skips(self):
+        message = {
+            "from": "15551234567",
+            "id": "wamid.legacy-unknown",
+            "type": "unknown",
+            "unsupported": "malformed",
+            "errors": {
+                "code": 131051,
+                "title": "Unsupported message type",
+                "error_data": "malformed",
+                "details": "Message type is not currently supported",
+            },
+        }
+        account = frappe._dict({"name": "Test WhatsApp Account"})
+
+        with (
+            patch(
+                "frappe_whatsapp.utils.webhook.is_contact_blocked",
+                return_value=False,
+            ),
+            patch(
+                "frappe_whatsapp.utils.webhook.resolve_incoming_routed_app"
+            ) as mock_resolve_route,
+            patch(
+                "frappe_whatsapp.utils.webhook.frappe.get_doc"
+            ) as mock_get_doc,
+            patch(
+                "frappe_whatsapp.utils.webhook.frappe.logger"
+            ) as mock_logger,
+        ):
+            _process_incoming_message(
+                message=message,
+                whatsapp_account=account,
+                sender_profile_name="Sensitive Sender Name",
+            )
+
+        mock_resolve_route.assert_not_called()
+        mock_get_doc.assert_not_called()
+        mock_logger.assert_called_once_with("frappe_whatsapp")
+        warning_message = mock_logger.return_value.warning.call_args.args[0]
+        self.assertIn('"message_type": "unknown"', warning_message)
+        self.assertIn('"unsupported_type": null', warning_message)
+        self.assertIn('"raw_type": null', warning_message)
+        self.assertIn('"code": "131051"', warning_message)
+        self.assertIn(
+            "Message type is not currently supported", warning_message
+        )
+        self.assertNotIn("15551234567", warning_message)
+        self.assertNotIn("Sensitive Sender Name", warning_message)
+
     @patch("frappe_whatsapp.utils.webhook._enqueue_language_detection")
     @patch("frappe_whatsapp.utils.webhook._handle_consent_keywords")
     @patch("frappe_whatsapp.utils.webhook.forward_incoming_to_app_async")
