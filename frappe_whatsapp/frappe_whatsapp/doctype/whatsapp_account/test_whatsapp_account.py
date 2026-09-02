@@ -2,13 +2,16 @@
 # See license.txt
 
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_account.whatsapp_account import (
+	WhatsAppAccount,
 	validate_account_connection,
+	validate_campaign_tracking_connection,
 )
 
 
@@ -27,7 +30,7 @@ class _Account(SimpleNamespace):
 		return getattr(self, field, None)
 
 
-def _account(**kwargs):
+def _account(**kwargs) -> WhatsAppAccount:
 	defaults = {
 		"name": "test-account",
 		"url": "https://graph.facebook.com",
@@ -37,9 +40,11 @@ def _account(**kwargs):
 		"token": "token",
 		"app_id": "app-id",
 		"app_secret": "app-secret",
+		"ads_access_token": "ads-token",
+		"enable_campaign_tracking": 1,
 	}
 	defaults.update(kwargs)
-	return _Account(**defaults)
+	return cast(WhatsAppAccount, _Account(**defaults))
 
 
 _MOD = (
@@ -145,6 +150,41 @@ class UnitTestWhatsAppAccount(FrappeTestCase):
 		self.assertEqual(result["token_type"], "USER")
 		self.assertTrue(result["expires_at"])
 		self.assertTrue(result["warnings"])
+
+	@patch(f"{_MOD}.request_meta_json")
+	def test_valid_campaign_tracking_token(self, mock_request):
+		mock_request.return_value = {
+			"data": {
+				"app_id": "app-id",
+				"is_valid": True,
+				"type": "SYSTEM_USER",
+				"expires_at": 0,
+				"scopes": ["ads_read"],
+			}
+		}
+
+		result = validate_campaign_tracking_connection(_account())
+
+		self.assertTrue(result["production_ready"])
+		self.assertTrue(result["required_scopes_present"])
+		self.assertNotIn("ads-token", str(result))
+
+	@patch(f"{_MOD}.request_meta_json")
+	def test_campaign_tracking_requires_ads_read(self, mock_request):
+		mock_request.return_value = {
+			"data": {
+				"app_id": "app-id",
+				"is_valid": True,
+				"type": "SYSTEM_USER",
+				"scopes": ["whatsapp_business_management"],
+			}
+		}
+
+		with self.assertRaises(frappe.ValidationError) as raised:
+			validate_campaign_tracking_connection(_account())
+
+		self.assertIn("ads_read", str(raised.exception))
+		self.assertNotIn("ads-token", str(raised.exception))
 
 
 class IntegrationTestWhatsAppAccount(FrappeTestCase):

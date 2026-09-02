@@ -22,7 +22,10 @@
   "is_default_incoming",
   "is_default_outgoing",
   "allow_auto_read_receipt",
-  "whatsapp_client_app"
+  "whatsapp_client_app",
+  "campaign_tracking_section",
+  "enable_campaign_tracking",
+  "ads_access_token"
  ],
  "fields": [
   {
@@ -114,12 +117,33 @@
    "fieldtype": "Link",
    "label": "WhatsApp Client App",
    "options": "WhatsApp Client App"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "campaign_tracking_section",
+   "fieldtype": "Section Break",
+   "label": "Campaign Attribution"
+  },
+  {
+   "default": "0",
+   "description": "Resolve Click-to-WhatsApp ad referrals through the Meta Marketing API before forwarding inbound messages.",
+   "fieldname": "enable_campaign_tracking",
+   "fieldtype": "Check",
+   "label": "Enable Campaign Tracking"
+  },
+  {
+   "depends_on": "enable_campaign_tracking",
+   "description": "Separate Meta system-user token with ads_read and access to the ad assets that target this WhatsApp number.",
+   "fieldname": "ads_access_token",
+   "fieldtype": "Password",
+   "label": "Ads Access Token",
+   "length": 300
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-03-25 14:22:00.000000",
+ "modified": "2026-09-02 10:12:57.890961",
  "modified_by": "Administrator",
  "module": "Frappe Whatsapp",
  "name": "WhatsApp Account",

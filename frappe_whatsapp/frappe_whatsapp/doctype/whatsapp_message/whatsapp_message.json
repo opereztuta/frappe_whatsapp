@@ -47,6 +47,21 @@
   "source_app",
   "routed_app",
   "external_reference",
+  "marketing_attribution_section",
+  "referral_source_type",
+  "referral_source_id",
+  "referral_ctwa_clid",
+  "referral_payload",
+  "column_break_attribution",
+  "meta_ad_name",
+  "meta_ad_account_id",
+  "meta_adset_id",
+  "meta_adset_name",
+  "meta_campaign_id",
+  "meta_campaign_name",
+  "attribution_status",
+  "attribution_resolved_at",
+  "attribution_error",
   "compliance_section",
   "consent_checked",
   "consent_status_at_send",
@@ -328,6 +343,113 @@
    "label": "External Reference"
   },
   {
+   "collapsible": 1,
+   "depends_on": "eval:doc.referral_source_id || doc.referral_payload",
+   "fieldname": "marketing_attribution_section",
+   "fieldtype": "Section Break",
+   "label": "Marketing Attribution"
+  },
+  {
+   "fieldname": "referral_source_type",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Referral Source Type",
+   "length": 20,
+   "read_only": 1
+  },
+  {
+   "fieldname": "referral_source_id",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Meta Referral Source ID",
+   "length": 64,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "referral_ctwa_clid",
+   "fieldtype": "Data",
+   "label": "Click-to-WhatsApp Click ID",
+   "length": 500,
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "referral_payload",
+   "fieldtype": "JSON",
+   "label": "Meta Referral Payload",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_attribution",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "meta_ad_name",
+   "fieldtype": "Data",
+   "label": "Meta Ad Name",
+   "length": 500,
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_ad_account_id",
+   "fieldtype": "Data",
+   "label": "Meta Ad Account ID",
+   "length": 64,
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_adset_id",
+   "fieldtype": "Data",
+   "label": "Meta Ad Set ID",
+   "length": 64,
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_adset_name",
+   "fieldtype": "Data",
+   "label": "Meta Ad Set Name",
+   "length": 500,
+   "read_only": 1
+  },
+  {
+   "fieldname": "meta_campaign_id",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Meta Campaign ID",
+   "length": 64,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "meta_campaign_name",
+   "fieldtype": "Data",
+   "label": "Meta Campaign Name",
+   "length": 500,
+   "read_only": 1
+  },
+  {
+   "fieldname": "attribution_status",
+   "fieldtype": "Select",
+   "label": "Attribution Status",
+   "options": "Pending\nResolved\nFailed\nNot Applicable",
+   "read_only": 1
+  },
+  {
+   "fieldname": "attribution_resolved_at",
+   "fieldtype": "Datetime",
+   "label": "Attribution Resolved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "attribution_error",
+   "fieldtype": "Small Text",
+   "label": "Attribution Error",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "compliance_section",
    "fieldtype": "Section Break",
    "label": "Compliance"
@@ -423,7 +545,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-15 00:00:00.000000",
+ "modified": "2026-09-02 10:15:01.984691",
  "modified_by": "Administrator",
  "module": "Frappe Whatsapp",
  "name": "WhatsApp Message",
@@ -452,6 +574,11 @@
    "role": "System Manager",
    "share": 1,
    "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager"
   }
  ],
  "quick_entry": 1,

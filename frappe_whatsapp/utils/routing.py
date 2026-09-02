@@ -13,6 +13,10 @@ from frappe.core.doctype.document_share_key.document_share_key import (
 from frappe.integrations.utils import make_post_request
 from frappe.utils import get_url, now_datetime
 from frappe_whatsapp.utils import format_number
+from frappe_whatsapp.utils.campaign_attribution import (
+    resolve_message_attribution,
+    serialize_referral,
+)
 
 if TYPE_CHECKING:
     from ..frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import (
@@ -154,7 +158,9 @@ def _get_forwarded_message_cache_key(message_name: str) -> str:
 
 def _incoming_message_already_forwarded(message_name: str) -> bool:
     return bool(frappe.cache().get_value(
-        _get_forwarded_message_cache_key(message_name)))
+        _get_forwarded_message_cache_key(message_name),
+        expires=True,
+    ))
 
 
 def _mark_incoming_message_forwarded(message_name: str) -> None:
@@ -333,6 +339,7 @@ def serialize_incoming_message_for_forwarding(
             attach=attach,
             attachment_name=attachment_name,
         ),
+        "referral": serialize_referral(incoming_message_doc),
     }
 
 
@@ -382,9 +389,18 @@ def forward_incoming_to_app(*, incoming_message_doc):
 
 
 def forward_incoming_to_app_async(*, incoming_message_name: str):
+    queue = (
+        "default"
+        if frappe.db.get_value(
+            "WhatsApp Message",
+            incoming_message_name,
+            "referral_source_type",
+        ) == "ad"
+        else "short"
+    )
     frappe.enqueue(
         "frappe_whatsapp.utils.routing.forward_incoming_to_app_by_name",
-        queue="short",
+        queue=queue,
         incoming_message_name=incoming_message_name,
         enqueue_after_commit=True
     )
@@ -393,6 +409,7 @@ def forward_incoming_to_app_async(*, incoming_message_name: str):
 def forward_incoming_to_app_by_name(*, incoming_message_name: str):
     incoming_message_doc = frappe.get_doc(
         "WhatsApp Message", incoming_message_name)
+    resolve_message_attribution(incoming_message_doc)
     forward_incoming_to_app(
         incoming_message_doc=incoming_message_doc)
 

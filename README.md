@@ -210,6 +210,130 @@ Messages received via webhook are automatically created as WhatsApp Message docu
 
 ![Incoming Message](https://user-images.githubusercontent.com/11792643/211519625-a528abe2-ba24-46a4-bcbc-170f6b4e27fb.png)
 
+### Click-to-WhatsApp Campaign Attribution
+
+Inbound messages opened from Facebook or Instagram Click-to-WhatsApp ads
+include Meta's `referral` object. The integration stores that object on the
+incoming WhatsApp Message and forwards it to the configured client app.
+
+To enrich the referral with ad-set and campaign IDs:
+
+1. Open the receiving **WhatsApp Account**.
+2. Enable **Campaign Tracking**.
+3. Add a separate permanent Meta system-user token with `ads_read` and access
+   to the relevant ad assets.
+4. Use **Validate Campaign Tracking** before enabling production traffic.
+
+#### Generate the Meta Ads system-user token
+
+Meta sometimes changes the names and location of Business Suite controls. The
+equivalent **Business settings**, **System users**, **Assign assets**, and
+**Generate token** controls should be used if the labels below differ.
+
+Before generating the token, confirm all of the following:
+
+- You have full control of the Meta Business Portfolio that owns the app and ad
+  accounts.
+- The Meta app is added to that Business Portfolio and has the Marketing API
+  product/use case. Its App ID must match the **App ID** on the receiving
+  WhatsApp Account; validation rejects a token issued to another app.
+- Every ad account containing a Click-to-WhatsApp ad for this number is owned
+  by, or shared with, the Business Portfolio. The ad account ID is shown as
+  `act=<AD_ACCOUNT_ID>` in the Ads Manager URL.
+
+Then create and authorize a least-privilege system user:
+
+1. Open **Meta Business Suite > Settings > Business settings > Users > System
+   users** and choose **Add**.
+2. Create a dedicated system user, for example `Frappe WhatsApp Attribution`.
+   Use the employee/regular system-user role; the person performing these steps
+   must still be a Business Portfolio administrator. An admin system-user role
+   is not required for read-only attribution.
+3. Select the new system user, choose **Assign assets**, and assign:
+   - **Apps:** the same Meta app configured on the WhatsApp Account, with
+     **Manage app** or **Full control**.
+   - **Ad accounts:** every account containing the relevant ads, with
+     **View performance** access. This is the least-privilege ad-account role
+     for read access; `ads_management` is not used by this integration.
+4. With the system user still selected, choose **Generate new token** (or
+   **Generate token**) and select that same Meta app.
+5. Set the expiration to **Never** and grant only `ads_read`. If **Never** is
+   unavailable, do not treat the token as permanent: use the longest permitted
+   expiration and establish a rotation reminder before enabling tracking.
+6. Generate the token and copy it immediately. Meta only displays it once. Do
+   not paste it into source control, chat, screenshots, browser URLs, or logs.
+7. In Frappe, open **WhatsApp Account**, paste it into **Ads Access Token**,
+   enable **Campaign Tracking**, save, and click **Validate Campaign
+   Tracking**. A **Production ready** result confirms that the token is valid,
+   belongs to the configured app, represents a system user, includes
+   `ads_read`, and has no expiry. Review any warnings when validation succeeds
+   without reporting production readiness.
+
+Use Meta's [Access Token Debugger](https://developers.facebook.com/tools/debug/accesstoken/)
+when an independent token check is needed. It should report a system-user token,
+the expected App ID, `ads_read`, and an expiry of `Never`. To confirm access to
+the actual ad asset, run this read-only request in Meta's Graph API Explorer or
+an API client, using the Ads token as a Bearer token:
+
+```http
+GET /<GRAPH_API_VERSION>/<AD_ID>?fields=id,name,account_id,adset{id,name},campaign{id,name}
+Authorization: Bearer <ADS_ACCESS_TOKEN>
+```
+
+The response should contain the ad, ad-set, and campaign objects. If token
+validation succeeds but this request fails, recheck the system user's ad-account
+assignment and confirm that `<AD_ID>` belongs to one of the assigned accounts.
+Regenerate the token after adding `ads_read`; permissions are captured when the
+token is issued.
+
+For an app reading ad accounts owned by the same Business Portfolio, Meta says
+Standard Access and `ads_read` are sufficient. Reading client or partner ad
+accounts additionally requires explicit asset sharing and may require Advanced
+Access for `ads_read`. See Meta's [Marketing API prerequisites and token
+guidance](https://www.postman.com/meta/facebook-marketing-api/documentation/0zr4mes/facebook-marketing-api-mapi)
+and [Marketing API onboarding checklist](https://www.postman.com/meta/facebook-marketing-api/documentation/9jo4f5y/mapi-onboarding).
+
+A token marked **Never** can still stop working if the system user, app, token,
+or ad-account assignment is revoked, or if Meta applies a security restriction.
+Keep the token in the encrypted **Ads Access Token** field and revoke and replace
+it immediately if it may have been exposed.
+
+The Ads token is separate from the WhatsApp messaging token and is never
+included in webhook payloads or error logs. Referral messages are resolved
+before their first client-app delivery. If Meta cannot resolve an ad, the
+message is still delivered once with its original `source_id` and `ctwa_clid`.
+Client-app deliveries add `message.referral` without changing existing fields:
+
+```json
+{
+  "source_type": "ad",
+  "source_id": "<AD_ID>",
+  "ctwa_clid": "<CLICK_ID>",
+  "ad": {"id": "<AD_ID>", "name": "<AD_NAME>", "account_id": "<ACCOUNT_ID>"},
+  "adset": {"id": "<ADSET_ID>", "name": "<ADSET_NAME>"},
+  "campaign": {"id": "<CAMPAIGN_ID>", "name": "<CAMPAIGN_NAME>"},
+  "resolution_status": "resolved"
+}
+```
+
+Organic messages use `"referral": null`.
+
+Retained webhook logs can be previewed and backfilled without replaying client
+webhooks:
+
+```bash
+bench --site <site> execute \
+  frappe_whatsapp.utils.campaign_attribution.backfill_campaign_attribution \
+  --kwargs "{'dry_run': True}"
+
+bench --site <site> execute \
+  frappe_whatsapp.utils.campaign_attribution.backfill_campaign_attribution \
+  --kwargs "{'dry_run': False}"
+```
+
+Always review the preview counts before applying the backfill. The command is
+idempotent and preserves each WhatsApp Message's `modified` timestamp.
+
 ### Contact Blocking and Spam Protection
 
 You can block unwanted WhatsApp contacts from **WhatsApp Profiles** or from an
