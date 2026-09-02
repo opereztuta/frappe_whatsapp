@@ -69,6 +69,48 @@ class TestRouting(FrappeTestCase):
         )
 
         self.assertEqual(payload["profile_name"], "Jane Sender")
+        self.assertIsNone(payload["referral"])
+
+    def test_serialize_incoming_message_includes_campaign_referral(self):
+        incoming_message_doc = frappe._dict(
+            {
+                "name": "MSG-ATTRIBUTION-1",
+                "doctype": "WhatsApp Message",
+                "from": "15551234567",
+                "to": "15557654321",
+                "profile_name": "Jane Sender",
+                "whatsapp_account": "Test Account",
+                "content_type": "text",
+                "message": "Hello from an ad",
+                "message_id": "wamid.attribution",
+                "creation": "2026-09-01 10:00:00",
+                "attach": None,
+                "referral_source_type": "ad",
+                "referral_source_id": "ad-123",
+                "referral_payload": json.dumps({
+                    "source_type": "ad",
+                    "source_id": "ad-123",
+                    "ctwa_clid": "click-123",
+                }),
+                "meta_ad_name": "Enrollment Ad",
+                "meta_ad_account_id": "act-123",
+                "meta_adset_id": "adset-123",
+                "meta_adset_name": "Prospects",
+                "meta_campaign_id": "campaign-123",
+                "meta_campaign_name": "Fall Enrollment",
+                "attribution_status": "Resolved",
+            }
+        )
+
+        payload = serialize_incoming_message_for_forwarding(
+            incoming_message_doc=incoming_message_doc
+        )
+
+        self.assertEqual(payload["referral"]["ctwa_clid"], "click-123")
+        self.assertEqual(
+            payload["referral"]["campaign"],
+            {"id": "campaign-123", "name": "Fall Enrollment"},
+        )
 
     def test_format_shared_contacts_includes_readable_structured_details(self):
         summary = _format_shared_contacts([
@@ -282,6 +324,11 @@ class TestRouting(FrappeTestCase):
                 "from": "+15551234567",
                 "type": "text",
                 "text": {"body": "Hello there"},
+                "referral": {
+                    "source_type": "ad",
+                    "source_id": "ad-123",
+                    "ctwa_clid": "click-123",
+                },
             },
             whatsapp_account=account,
             sender_profile_name="Jane Sender",
@@ -297,6 +344,9 @@ class TestRouting(FrappeTestCase):
         message_doc = frappe.get_doc("WhatsApp Message", doc_name)
         self.assertEqual(message_doc.routed_app, app.name)
         self.assertEqual(message_doc.profile_name, "Jane Sender")
+        self.assertEqual(message_doc.referral_source_id, "ad-123")
+        self.assertEqual(message_doc.referral_ctwa_clid, "click-123")
+        self.assertEqual(message_doc.attribution_status, "Pending")
         mock_forward_async.assert_called_once_with(
             incoming_message_name=str(message_doc.name)
         )

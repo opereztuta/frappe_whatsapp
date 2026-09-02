@@ -80,6 +80,9 @@ class WhatsAppMessage(Document):
         from frappe.types import DF
 
         attach: DF.Attach | None
+        attribution_error: DF.SmallText | None
+        attribution_resolved_at: DF.Datetime | None
+        attribution_status: DF.Literal["Pending", "Resolved", "Failed", "Not Applicable"]
         body_param: DF.JSON | None
         bulk_message_reference: DF.Data | None
         buttons: DF.JSON | None
@@ -102,9 +105,19 @@ class WhatsAppMessage(Document):
         message: DF.HTMLEditor | None
         message_id: DF.Data | None
         message_type: DF.Literal["Manual", "Template"]
+        meta_ad_account_id: DF.Data | None
+        meta_ad_name: DF.Data | None
+        meta_adset_id: DF.Data | None
+        meta_adset_name: DF.Data | None
+        meta_campaign_id: DF.Data | None
+        meta_campaign_name: DF.Data | None
         profile_name: DF.Data | None
         reference_doctype: DF.Link | None
         reference_name: DF.DynamicLink | None
+        referral_ctwa_clid: DF.Data | None
+        referral_payload: DF.JSON | None
+        referral_source_id: DF.Data | None
+        referral_source_type: DF.Data | None
         reply_to_message_id: DF.Data | None
         routed_app: DF.Link | None
         source_app: DF.Link | None

@@ -22,6 +22,7 @@ from frappe_whatsapp.utils.consent import (
     send_opt_out_confirmation,
     send_opt_in_confirmation,
 )
+from frappe_whatsapp.utils.campaign_attribution import normalize_referral
 
 
 MEDIA_EXTENSION_BY_MIME = {
@@ -609,6 +610,7 @@ def _process_incoming_message(
         return
 
     message_type = message.get("type")
+    referral_fields = normalize_referral(message.get("referral"))
     if (
         isinstance(message_type, str)
         and message_type in _UNSUPPORTED_INCOMING_MESSAGE_TYPES
@@ -658,6 +660,7 @@ def _process_incoming_message(
             "profile_name": sender_profile_name,
             "whatsapp_account": whatsapp_account.name,
             "routed_app": routed_app,
+            **referral_fields,
         }).insert(ignore_permissions=True)
 
         # Check for opt-out / opt-in keywords
@@ -705,6 +708,7 @@ def _process_incoming_message(
             "profile_name": sender_profile_name,
             "whatsapp_account": whatsapp_account.name,
             "routed_app": routed_app,
+            **referral_fields,
         })
         if (
             message_type == "audio"
@@ -761,6 +765,7 @@ def _process_incoming_message(
             "profile_name": sender_profile_name,
             "whatsapp_account": whatsapp_account.name,
             "routed_app": routed_app,
+            **referral_fields,
         }).insert(ignore_permissions=True)
 
         # Contact-card data is not sender-authored conversational text. Do not
@@ -787,6 +792,7 @@ def _process_incoming_message(
             "profile_name": sender_profile_name,
             "whatsapp_account": whatsapp_account.name,
             "routed_app": routed_app,
+            **referral_fields,
         }).insert(ignore_permissions=True)
 
         # Check for opt-out / opt-in keywords if message contains text-like
@@ -862,6 +868,7 @@ def _handle_interactive(
         routed_app, reply_to_message_id, is_reply):
     interactive = message.get("interactive") or {}
     interactive_type = interactive.get("type")
+    referral_fields = normalize_referral(message.get("referral"))
 
     if interactive_type == "call_permission_reply":
         permission_reply = interactive.get("call_permission_reply") or {}
@@ -883,6 +890,7 @@ def _handle_interactive(
             "profile_name": sender_profile_name,
             "whatsapp_account": whatsapp_account.name,
             "routed_app": routed_app,
+            **referral_fields,
         }).insert(ignore_permissions=True)
 
         from frappe_whatsapp.utils.calling import handle_call_permission_reply
@@ -917,6 +925,7 @@ def _handle_interactive(
             "profile_name": sender_profile_name,
             "whatsapp_account": whatsapp_account.name,
             "routed_app": routed_app,
+            **referral_fields,
         }).insert(ignore_permissions=True)
 
         # Check for opt-out / opt-in keywords based on reply text/id
@@ -968,6 +977,7 @@ def _handle_interactive(
             "profile_name": sender_profile_name,
             "whatsapp_account": whatsapp_account.name,
             "routed_app": routed_app,
+            **referral_fields,
         }).insert(ignore_permissions=True)
 
         # publish realtime async too (optional)

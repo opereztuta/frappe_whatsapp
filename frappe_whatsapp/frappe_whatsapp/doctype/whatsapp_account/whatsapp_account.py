@@ -15,6 +15,7 @@ REQUIRED_WHATSAPP_SCOPES = {
     "whatsapp_business_management",
     "whatsapp_business_messaging",
 }
+REQUIRED_ADS_SCOPES = {"ads_read"}
 
 
 class WhatsAppAccount(Document):
@@ -28,9 +29,11 @@ class WhatsAppAccount(Document):
 
         account_name: DF.Data | None
         allow_auto_read_receipt: DF.Check
+        ads_access_token: DF.Password | None
         app_id: DF.Data | None
         app_secret: DF.Password | None
         business_id: DF.Data | None
+        enable_campaign_tracking: DF.Check
         is_default_incoming: DF.Check
         is_default_outgoing: DF.Check
         phone_id: DF.Data | None
@@ -200,6 +203,90 @@ def validate_account_connection(account: WhatsAppAccount) -> dict[str, Any]:
     return result
 
 
+def validate_campaign_tracking_connection(
+    account: WhatsAppAccount,
+) -> dict[str, Any]:
+    """Validate the separate Marketing API token without exposing it."""
+    account_name = str(account.name or "")
+    required_fields = ("url", "version", "app_id")
+    missing = [field for field in required_fields if not account.get(field)]
+    token = account.get_password("ads_access_token")
+    app_secret = account.get_password("app_secret")
+    if not token:
+        missing.append("ads_access_token")
+    if not app_secret:
+        missing.append("app_secret")
+    if missing:
+        frappe.throw(
+            _("WhatsApp Account {0} is missing campaign tracking fields: {1}.").format(
+                account_name,
+                ", ".join(missing),
+            )
+        )
+
+    url = str(account.url).rstrip("/")
+    version = str(account.version).strip("/")
+    app_id = str(account.app_id)
+    debug_payload = request_meta_json(
+        "GET",
+        f"{url}/{version}/debug_token",
+        account_name=account_name,
+        operation=_("Ads access-token inspection"),
+        headers=_bearer_headers(f"{app_id}|{app_secret}"),
+        params={"input_token": str(token)},
+    )
+    debug_data = debug_payload.get("data")
+    if not isinstance(debug_data, dict) or not debug_data.get("is_valid"):
+        frappe.throw(
+            _("WhatsApp Account {0}: Meta reports an invalid Ads token.").format(
+                account_name
+            )
+        )
+
+    token_app_id = str(debug_data.get("app_id") or "")
+    if token_app_id and token_app_id != app_id:
+        frappe.throw(
+            _(
+                "WhatsApp Account {0}: the Ads token belongs to a different Meta app."
+            ).format(account_name)
+        )
+
+    scopes = {
+        str(scope) for scope in (debug_data.get("scopes") or []) if scope
+    }
+    missing_scopes = sorted(REQUIRED_ADS_SCOPES - scopes)
+    if missing_scopes:
+        frappe.throw(
+            _("WhatsApp Account {0}: Ads token is missing scopes: {1}.").format(
+                account_name,
+                ", ".join(missing_scopes),
+            )
+        )
+
+    token_type = str(debug_data.get("type") or "UNKNOWN").upper()
+    expires_at = _format_expiry(debug_data.get("expires_at"))
+    warnings = []
+    if token_type != "SYSTEM_USER":
+        warnings.append(
+            _("This is a {0} token. Use a permanent SYSTEM_USER token in production.").format(
+                token_type
+            )
+        )
+    elif expires_at:
+        warnings.append(
+            _("This system-user token expires at {0}.").format(expires_at)
+        )
+
+    return {
+        "valid": True,
+        "token_type": token_type,
+        "expires_at": expires_at,
+        "required_scopes_present": True,
+        "production_ready": token_type == "SYSTEM_USER" and not expires_at,
+        "warnings": warnings,
+    }
+
+
 @frappe.whitelist()
 def validate_meta_connection(whatsapp_account: str) -> dict[str, Any]:
     """Permission-checked endpoint for the account form validation button."""
@@ -207,3 +294,12 @@ def validate_meta_connection(whatsapp_account: str) -> dict[str, Any]:
     account = frappe.get_doc("WhatsApp Account", whatsapp_account)
     account.check_permission("read")
     return validate_account_connection(account)
+
+
+@frappe.whitelist()
+def validate_campaign_tracking(whatsapp_account: str) -> dict[str, Any]:
+    """Permission-checked endpoint for Ads-token validation."""
+    frappe.only_for("System Manager")
+    account = frappe.get_doc("WhatsApp Account", whatsapp_account)
+    account.check_permission("read")
+    return validate_campaign_tracking_connection(account)
