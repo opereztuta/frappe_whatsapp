@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Iterator, TypedDict
+from typing import Any, Iterator, TypedDict, cast
 
 import frappe
 from frappe import _
 from frappe.utils import cint, now_datetime
 
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_account.whatsapp_account import (
+    WhatsAppAccount,
+)
 from frappe_whatsapp.utils.meta import request_meta_json
 
 
@@ -111,10 +114,11 @@ def _store_cache(
     adset = adset if isinstance(adset, dict) else {}
     campaign = campaign if isinstance(campaign, dict) else {}
     resolved_at = now_datetime()
-    values = {
+    cache_name = _cache_name(whatsapp_account, ad_id)
+    values: dict[str, Any] = {
         "doctype": ATTRIBUTION_CACHE_DOCTYPE,
-        "name": _cache_name(whatsapp_account, ad_id),
-        "cache_key": _cache_name(whatsapp_account, ad_id),
+        "name": cache_name,
+        "cache_key": cache_name,
         "whatsapp_account": whatsapp_account,
         "ad_id": ad_id,
         "ad_name": _bounded_text(payload.get("name"), 500),
@@ -127,26 +131,25 @@ def _store_cache(
             payload.get("effective_status"), 50),
         "resolved_at": resolved_at,
     }
-    existing = frappe.db.exists(
-        ATTRIBUTION_CACHE_DOCTYPE, values["name"])
+    existing = frappe.db.exists(ATTRIBUTION_CACHE_DOCTYPE, cache_name)
     if existing:
+        existing_name = str(existing)
         frappe.db.set_value(
             ATTRIBUTION_CACHE_DOCTYPE,
-            existing,
+            existing_name,
             {key: value for key, value in values.items()
              if key not in {"doctype", "name", "cache_key"}},
             update_modified=False,
         )
-        return frappe.get_doc(ATTRIBUTION_CACHE_DOCTYPE, existing)
+        return frappe.get_doc(ATTRIBUTION_CACHE_DOCTYPE, existing_name)
 
     try:
         return frappe.get_doc(values).insert(ignore_permissions=True)
     except frappe.DuplicateEntryError:
-        return frappe.get_doc(
-            ATTRIBUTION_CACHE_DOCTYPE, values["name"])
+        return frappe.get_doc(ATTRIBUTION_CACHE_DOCTYPE, cache_name)
 
 
-def _resolve_ad(*, account: Any, ad_id: str) -> Any:
+def _resolve_ad(*, account: WhatsAppAccount, ad_id: str) -> Any:
     token = account.get_password("ads_access_token")
     if not token:
         raise frappe.ValidationError(
@@ -196,8 +199,11 @@ def resolve_message_attribution(message_doc: Any) -> None:
 
     cache_name = _cache_name(str(message_doc.whatsapp_account), ad_id)
     try:
-        account = frappe.get_doc(
-            "WhatsApp Account", message_doc.whatsapp_account)
+        account_name = str(message_doc.whatsapp_account or "")
+        account = cast(
+            WhatsAppAccount,
+            frappe.get_doc("WhatsApp Account", account_name),
+        )
         if not cint(account.enable_campaign_tracking):
             raise frappe.ValidationError(
                 _(
@@ -302,16 +308,19 @@ def iter_webhook_referrals(payload: Any) -> Iterator[ReferralEvent]:
 
 
 def _get_referral_log_rows() -> list[dict[str, Any]]:
-    return frappe.db.sql(
-        f"""
-        SELECT meta_data
-        FROM `tab{NOTIFICATION_LOG_DOCTYPE}`
-        WHERE template = 'Webhook'
-          AND meta_data LIKE %s
-        ORDER BY creation
-        """,
-        ('%"referral"%',),
-        as_dict=True,
+    return cast(
+        list[dict[str, Any]],
+        frappe.db.sql(
+            f"""
+            SELECT meta_data
+            FROM `tab{NOTIFICATION_LOG_DOCTYPE}`
+            WHERE template = 'Webhook'
+              AND meta_data LIKE %s
+            ORDER BY creation
+            """,
+            ('%"referral"%',),
+            as_dict=True,
+        ),
     )
 
 
@@ -339,23 +348,28 @@ def backfill_campaign_attribution(dry_run: bool = True) -> dict[str, int]:
                 stats["skipped"] += 1
                 continue
             seen_messages.add(event["message_id"])
-            message_name = frappe.db.get_value(
+            raw_message_name = frappe.db.get_value(
                 MESSAGE_DOCTYPE,
                 {"message_id": event["message_id"]},
                 "name",
             )
-            if not message_name:
+            if not raw_message_name:
                 stats["skipped"] += 1
                 continue
+            message_name = str(raw_message_name)
             stats["matched"] += 1
             values = normalize_referral(event["referral"])
-            existing = frappe.db.get_value(
-                MESSAGE_DOCTYPE,
-                message_name,
-                ["whatsapp_account", *values.keys()],
-                as_dict=True,
+            existing_rows = cast(
+                list[dict[str, Any]],
+                frappe.get_all(
+                    MESSAGE_DOCTYPE,
+                    filters={"name": message_name},
+                    fields=["whatsapp_account", *values.keys()],
+                    limit=1,
+                ),
             )
-            account_name = existing.get("whatsapp_account") if existing else None
+            existing = existing_rows[0] if existing_rows else {}
+            account_name = existing.get("whatsapp_account")
             if (
                 values.get("referral_source_type") == "ad"
                 and values.get("referral_source_id")

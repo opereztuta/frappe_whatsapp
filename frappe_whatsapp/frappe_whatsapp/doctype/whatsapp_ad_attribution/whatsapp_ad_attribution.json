@@ -1,8 +1,7 @@
 {
  "actions": [],
- "allow_rename": 0,
  "autoname": "field:cache_key",
- "creation": "2026-09-01 12:00:00.000000",
+ "creation": "2026-09-01 12:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -22,7 +21,6 @@
   {
    "fieldname": "cache_key",
    "fieldtype": "Data",
-   "hidden": 1,
    "label": "Cache Key",
    "read_only": 1,
    "reqd": 1,
@@ -31,6 +29,7 @@
   {
    "fieldname": "whatsapp_account",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "WhatsApp Account",
    "options": "WhatsApp Account",
@@ -41,6 +40,7 @@
   {
    "fieldname": "ad_id",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Meta Ad ID",
    "length": 64,
@@ -108,10 +108,11 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-01 12:00:00.000000",
+ "modified": "2026-09-02 10:14:18.973973",
  "modified_by": "Administrator",
  "module": "Frappe Whatsapp",
  "name": "WhatsApp Ad Attribution",
+ "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [
   {
@@ -120,6 +121,7 @@
    "role": "System Manager"
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []

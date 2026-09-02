@@ -1,9 +1,16 @@
 import json
+from typing import Any, cast
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_conversation_route.whatsapp_conversation_route import (
+    WhatsAppConversationRoute,
+)
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import (
+    WhatsAppMessage,
+)
 from frappe_whatsapp.utils.routing import (
     forward_incoming_to_app,
     resolve_incoming_routed_app,
@@ -15,6 +22,14 @@ from frappe_whatsapp.utils.webhook import (
     get_media_file_extension,
     normalize_media_mime_type,
 )
+
+
+def _get_message_doc(name: Any) -> WhatsAppMessage:
+    assert isinstance(name, str)
+    return cast(
+        WhatsAppMessage,
+        frappe.get_doc("WhatsApp Message", name),
+    )
 
 
 class TestRouting(FrappeTestCase):
@@ -48,20 +63,23 @@ class TestRouting(FrappeTestCase):
     def test_serialize_incoming_message_for_forwarding_includes_profile_name(
         self,
     ):
-        incoming_message_doc = frappe._dict(
-            {
-                "name": "MSG-0001",
-                "doctype": "WhatsApp Message",
-                "from": "15551234567",
-                "to": "15557654321",
-                "profile_name": "Jane Sender",
-                "whatsapp_account": "Test Account",
-                "content_type": "text",
-                "message": "Hello there",
-                "message_id": "wamid.123",
-                "creation": "2026-03-17 10:00:00",
-                "attach": None,
-            }
+        incoming_message_doc = cast(
+            WhatsAppMessage,
+            frappe._dict(
+                {
+                    "name": "MSG-0001",
+                    "doctype": "WhatsApp Message",
+                    "from": "15551234567",
+                    "to": "15557654321",
+                    "profile_name": "Jane Sender",
+                    "whatsapp_account": "Test Account",
+                    "content_type": "text",
+                    "message": "Hello there",
+                    "message_id": "wamid.123",
+                    "creation": "2026-03-17 10:00:00",
+                    "attach": None,
+                }
+            ),
         )
 
         payload = serialize_incoming_message_for_forwarding(
@@ -72,34 +90,37 @@ class TestRouting(FrappeTestCase):
         self.assertIsNone(payload["referral"])
 
     def test_serialize_incoming_message_includes_campaign_referral(self):
-        incoming_message_doc = frappe._dict(
-            {
-                "name": "MSG-ATTRIBUTION-1",
-                "doctype": "WhatsApp Message",
-                "from": "15551234567",
-                "to": "15557654321",
-                "profile_name": "Jane Sender",
-                "whatsapp_account": "Test Account",
-                "content_type": "text",
-                "message": "Hello from an ad",
-                "message_id": "wamid.attribution",
-                "creation": "2026-09-01 10:00:00",
-                "attach": None,
-                "referral_source_type": "ad",
-                "referral_source_id": "ad-123",
-                "referral_payload": json.dumps({
-                    "source_type": "ad",
-                    "source_id": "ad-123",
-                    "ctwa_clid": "click-123",
-                }),
-                "meta_ad_name": "Enrollment Ad",
-                "meta_ad_account_id": "act-123",
-                "meta_adset_id": "adset-123",
-                "meta_adset_name": "Prospects",
-                "meta_campaign_id": "campaign-123",
-                "meta_campaign_name": "Fall Enrollment",
-                "attribution_status": "Resolved",
-            }
+        incoming_message_doc = cast(
+            WhatsAppMessage,
+            frappe._dict(
+                {
+                    "name": "MSG-ATTRIBUTION-1",
+                    "doctype": "WhatsApp Message",
+                    "from": "15551234567",
+                    "to": "15557654321",
+                    "profile_name": "Jane Sender",
+                    "whatsapp_account": "Test Account",
+                    "content_type": "text",
+                    "message": "Hello from an ad",
+                    "message_id": "wamid.attribution",
+                    "creation": "2026-09-01 10:00:00",
+                    "attach": None,
+                    "referral_source_type": "ad",
+                    "referral_source_id": "ad-123",
+                    "referral_payload": json.dumps({
+                        "source_type": "ad",
+                        "source_id": "ad-123",
+                        "ctwa_clid": "click-123",
+                    }),
+                    "meta_ad_name": "Enrollment Ad",
+                    "meta_ad_account_id": "act-123",
+                    "meta_adset_id": "adset-123",
+                    "meta_adset_name": "Prospects",
+                    "meta_campaign_id": "campaign-123",
+                    "meta_campaign_name": "Fall Enrollment",
+                    "attribution_status": "Resolved",
+                }
+            ),
         )
 
         payload = serialize_incoming_message_for_forwarding(
@@ -259,9 +280,12 @@ class TestRouting(FrappeTestCase):
         )
 
         self.assertEqual(routed_app, app.name)
-        route = frappe.get_doc(
-            "WhatsApp Conversation Route",
-            f"15551234567-{account.name}",
+        route = cast(
+            WhatsAppConversationRoute,
+            frappe.get_doc(
+                "WhatsApp Conversation Route",
+                f"15551234567-{account.name}",
+            ),
         )
         self.assertEqual(route.last_source_app, app.name)
         self.assertFalse(route.last_outgoing_message)
@@ -301,9 +325,12 @@ class TestRouting(FrappeTestCase):
         forward_incoming_to_app(incoming_message_doc=incoming_message_doc)
 
         self.assertTrue(mock_make_post_request.called)
-        route = frappe.get_doc(
-            "WhatsApp Conversation Route",
-            f"15551234567-{account.name}",
+        route = cast(
+            WhatsAppConversationRoute,
+            frappe.get_doc(
+                "WhatsApp Conversation Route",
+                f"15551234567-{account.name}",
+            ),
         )
         self.assertEqual(route.last_source_app, app.name)
 
@@ -341,7 +368,7 @@ class TestRouting(FrappeTestCase):
         )
         self.assertTrue(doc_name)
 
-        message_doc = frappe.get_doc("WhatsApp Message", doc_name)
+        message_doc = _get_message_doc(doc_name)
         self.assertEqual(message_doc.routed_app, app.name)
         self.assertEqual(message_doc.profile_name, "Jane Sender")
         self.assertEqual(message_doc.referral_source_id, "ad-123")
@@ -531,7 +558,7 @@ class TestRouting(FrappeTestCase):
         )
         self.assertEqual(len(message_names), 1)
 
-        message_doc = frappe.get_doc("WhatsApp Message", message_names[0])
+        message_doc = _get_message_doc(message_names[0])
         self.assertEqual(message_doc.content_type, "contact")
         self.assertEqual(message_doc.profile_name, "Jane Sender")
         self.assertEqual(message_doc.routed_app, app.name)
@@ -590,7 +617,7 @@ class TestRouting(FrappeTestCase):
         )
         self.assertTrue(doc_name)
 
-        message_doc = frappe.get_doc("WhatsApp Message", doc_name)
+        message_doc = _get_message_doc(doc_name)
         self.assertEqual(message_doc.content_type, "sticker")
         self.assertEqual(message_doc.message, "")
         self.assertEqual(message_doc.routed_app, app.name)
@@ -644,7 +671,7 @@ class TestRouting(FrappeTestCase):
         )
         self.assertTrue(doc_name)
 
-        message_doc = frappe.get_doc("WhatsApp Message", doc_name)
+        message_doc = _get_message_doc(doc_name)
         self.assertEqual(message_doc.content_type, "audio")
         self.assertEqual(message_doc.message, "")
         if message_doc.meta.has_field("is_voice_note"):

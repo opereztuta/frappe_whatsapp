@@ -898,7 +898,7 @@ def _handle_interactive(
             contact_number=str(message.get("from") or ""),
             whatsapp_account_name=str(whatsapp_account.name),
             response=response,
-            is_permanent=cint(permission_reply.get("is_permanent")) == 1,
+            is_permanent=cint(permission_reply.get("is_permanent") or 0) == 1,
             expiration_timestamp=permission_reply.get(
                 "expiration_timestamp"),
             response_source=permission_reply.get("response_source"),

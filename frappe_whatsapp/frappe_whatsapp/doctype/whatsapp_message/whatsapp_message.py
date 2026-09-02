@@ -6,6 +6,7 @@ import os
 import frappe
 import requests
 from frappe import _, throw
+from frappe.core.doctype.file.file import File
 from frappe.model.document import Document
 from frappe.integrations.utils import make_post_request
 from frappe.utils import get_url
@@ -266,7 +267,7 @@ class WhatsAppMessage(Document):
                 message_name=self.name,
             )
 
-    def _get_local_attachment_file(self):
+    def _get_local_attachment_file(self) -> File | None:
         if not self.attach or self.attach.startswith(("http://", "https://")):
             return None
 
@@ -280,9 +281,11 @@ class WhatsAppMessage(Document):
         if not files:
             return None
 
-        return frappe.get_doc("File", files[0].name)
+        return cast(File, frappe.get_doc("File", str(files[0].name)))
 
-    def _get_audio_upload_mime_type(self, file_doc=None) -> str:
+    def _get_audio_upload_mime_type(
+        self, file_doc: File | None = None
+    ) -> str:
         file_name = (
             str(file_doc.file_name)
             if file_doc and file_doc.get("file_name")
@@ -331,9 +334,15 @@ class WhatsAppMessage(Document):
                 title=_("Unsupported Voice Note Format"))
 
         from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_account.whatsapp_account import WhatsAppAccount  # noqa: E501
+        whatsapp_account_name = str(self.whatsapp_account or "")
+        if not whatsapp_account_name:
+            frappe.throw(
+                _("A WhatsApp Account is required to upload audio media."),
+                title=_("Audio Upload Failed"),
+            )
         whatsapp_account = cast(
             WhatsAppAccount,
-            frappe.get_doc("WhatsApp Account", self.whatsapp_account))
+            frappe.get_doc("WhatsApp Account", whatsapp_account_name))
         token = whatsapp_account.get_password("token")
         upload_url = (
             f"{whatsapp_account.url}/{whatsapp_account.version}"
@@ -341,6 +350,7 @@ class WhatsAppMessage(Document):
         )
         file_name = file_doc.file_name or os.path.basename(file_path)
 
+        payload: dict[str, Any] = {}
         try:
             with open(file_path, "rb") as audio_file:
                 response = requests.post(
@@ -466,11 +476,12 @@ class WhatsAppMessage(Document):
                           "before sending."),
                         title=_("Unsupported Voice Note Attachment"),
                     )
-                data["audio"] = (
+                audio_payload: dict[str, Any] = (
                     {"id": media_id} if media_id else {"link": link}
                 )
                 if self.get("is_voice_note"):
-                    data["audio"]["voice"] = True
+                    audio_payload["voice"] = True
+                data["audio"] = audio_payload
 
             elif self.content_type == "interactive":
                 # Interactive message (buttons or list)

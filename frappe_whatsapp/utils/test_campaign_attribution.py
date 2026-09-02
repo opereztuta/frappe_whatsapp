@@ -1,9 +1,19 @@
 import json
+from typing import Any, cast
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_account.whatsapp_account import (
+    WhatsAppAccount,
+)
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_client_app.whatsapp_client_app import (
+    WhatsAppClientApp,
+)
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import (
+    WhatsAppMessage,
+)
 from frappe_whatsapp.utils.campaign_attribution import (
     backfill_campaign_attribution,
     iter_webhook_referrals,
@@ -17,7 +27,7 @@ from frappe_whatsapp.utils.routing import forward_incoming_to_app_by_name
 _MOD = "frappe_whatsapp.utils.campaign_attribution"
 
 
-def _referral() -> dict:
+def _referral() -> dict[str, Any]:
     return {
         "source_url": "https://fb.me/ad",
         "source_id": "120249647384630076",
@@ -32,7 +42,7 @@ def _referral() -> dict:
     }
 
 
-def _graph_payload() -> dict:
+def _graph_payload() -> dict[str, Any]:
     return {
         "id": "120249647384630076",
         "name": "NY English Ad",
@@ -44,20 +54,31 @@ def _graph_payload() -> dict:
 
 
 class TestCampaignAttribution(FrappeTestCase):
-    def _account(self):
+    def _account(self) -> WhatsAppAccount:
         suffix = frappe.generate_hash(length=8)
-        return frappe.get_doc({
-            "doctype": "WhatsApp Account",
-            "account_name": f"Attribution Account {suffix}",
-            "status": "Active",
-            "url": "https://graph.facebook.com",
-            "version": "v24.0",
-            "enable_campaign_tracking": 1,
-            "ads_access_token": "secret-ads-token",
-        }).insert(ignore_permissions=True)
+        return cast(
+            WhatsAppAccount,
+            frappe.get_doc(
+                {
+                    "doctype": "WhatsApp Account",
+                    "account_name": f"Attribution Account {suffix}",
+                    "status": "Active",
+                    "url": "https://graph.facebook.com",
+                    "version": "v24.0",
+                    "enable_campaign_tracking": 1,
+                    "ads_access_token": "secret-ads-token",
+                }
+            ).insert(ignore_permissions=True),
+        )
 
-    def _message(self, account, *, message_id=None, referral=None):
-        values = {
+    def _message(
+        self,
+        account: WhatsAppAccount,
+        *,
+        message_id: str | None = None,
+        referral: Any = None,
+    ) -> WhatsAppMessage:
+        values: dict[str, Any] = {
             "doctype": "WhatsApp Message",
             "type": "Incoming",
             "from": "15551234567",
@@ -68,16 +89,24 @@ class TestCampaignAttribution(FrappeTestCase):
         }
         if referral is not None:
             values.update(normalize_referral(referral))
-        return frappe.get_doc(values).insert(ignore_permissions=True)
+        return cast(
+            WhatsAppMessage,
+            frappe.get_doc(values).insert(ignore_permissions=True),
+        )
 
-    def _client_app(self):
+    def _client_app(self) -> WhatsAppClientApp:
         suffix = frappe.generate_hash(length=8)
-        return frappe.get_doc({
-            "doctype": "WhatsApp Client App",
-            "app_id": f"attribution-client-{suffix}",
-            "enabled": 1,
-            "inbound_webhook_url": "https://example.com/whatsapp/inbound",
-        }).insert(ignore_permissions=True)
+        return cast(
+            WhatsAppClientApp,
+            frappe.get_doc(
+                {
+                    "doctype": "WhatsApp Client App",
+                    "app_id": f"attribution-client-{suffix}",
+                    "enabled": 1,
+                    "inbound_webhook_url": "https://example.com/whatsapp/inbound",
+                }
+            ).insert(ignore_permissions=True),
+        )
 
     def test_normalize_complete_partial_and_removed_referral(self):
         values = normalize_referral(_referral())
@@ -98,7 +127,7 @@ class TestCampaignAttribution(FrappeTestCase):
 
     def test_iter_webhook_referrals_supports_list_and_dict_entries(self):
         message = {"id": "wamid.referral", "referral": _referral()}
-        payload = {
+        payload: dict[str, Any] = {
             "entry": [{"changes": [{"value": {"messages": [message]}}]}]
         }
         events = list(iter_webhook_referrals(payload))
@@ -133,8 +162,9 @@ class TestCampaignAttribution(FrappeTestCase):
         resolve_message_attribution(message)
 
         self.assertEqual(message.attribution_status, "Failed")
-        self.assertIn("denied", message.attribution_error)
+        self.assertIn("denied", message.attribution_error or "")
         referral = serialize_referral(message)
+        assert referral is not None
         self.assertEqual(referral["source_id"], "120249647384630076")
         self.assertIsNone(referral["campaign"])
         self.assertEqual(referral["resolution_status"], "failed")
@@ -146,11 +176,18 @@ class TestCampaignAttribution(FrappeTestCase):
         resolve_message_attribution(message)
 
         payload = serialize_referral(message)
+        assert payload is not None
+        ad = payload["ad"]
+        adset = payload["adset"]
+        campaign = payload["campaign"]
+        assert isinstance(ad, dict)
+        assert isinstance(adset, dict)
+        assert isinstance(campaign, dict)
 
         self.assertEqual(payload["ctwa_clid"], "click-id")
-        self.assertEqual(payload["ad"]["id"], "120249647384630076")
-        self.assertEqual(payload["adset"]["id"], "adset-123")
-        self.assertEqual(payload["campaign"]["id"], "campaign-123")
+        self.assertEqual(ad["id"], "120249647384630076")
+        self.assertEqual(adset["id"], "adset-123")
+        self.assertEqual(campaign["id"], "campaign-123")
         self.assertEqual(payload["resolution_status"], "resolved")
 
     @patch(f"{_MOD}.request_meta_json", return_value=_graph_payload())

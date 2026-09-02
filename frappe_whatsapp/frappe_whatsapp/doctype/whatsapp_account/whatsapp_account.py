@@ -2,7 +2,7 @@
 # For license information, please see license.txt
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 import frappe
 from frappe import _
@@ -28,8 +28,8 @@ class WhatsAppAccount(Document):
         from frappe.types import DF
 
         account_name: DF.Data | None
-        allow_auto_read_receipt: DF.Check
         ads_access_token: DF.Password | None
+        allow_auto_read_receipt: DF.Check
         app_id: DF.Data | None
         app_secret: DF.Password | None
         business_id: DF.Data | None
@@ -166,6 +166,7 @@ def validate_account_connection(account: WhatsAppAccount) -> dict[str, Any]:
                 account_name
             )
         )
+    assert isinstance(debug_data, dict)
 
     token_type = str(debug_data.get("type") or "UNKNOWN").upper()
     scopes = {
@@ -242,6 +243,7 @@ def validate_campaign_tracking_connection(
                 account_name
             )
         )
+    assert isinstance(debug_data, dict)
 
     token_app_id = str(debug_data.get("app_id") or "")
     if token_app_id and token_app_id != app_id:
@@ -291,7 +293,10 @@ def validate_campaign_tracking_connection(
 def validate_meta_connection(whatsapp_account: str) -> dict[str, Any]:
     """Permission-checked endpoint for the account form validation button."""
     frappe.only_for("System Manager")
-    account = frappe.get_doc("WhatsApp Account", whatsapp_account)
+    account = cast(
+        WhatsAppAccount,
+        frappe.get_doc("WhatsApp Account", whatsapp_account),
+    )
     account.check_permission("read")
     return validate_account_connection(account)
 
@@ -300,6 +305,9 @@ def validate_meta_connection(whatsapp_account: str) -> dict[str, Any]:
 def validate_campaign_tracking(whatsapp_account: str) -> dict[str, Any]:
     """Permission-checked endpoint for Ads-token validation."""
     frappe.only_for("System Manager")
-    account = frappe.get_doc("WhatsApp Account", whatsapp_account)
+    account = cast(
+        WhatsAppAccount,
+        frappe.get_doc("WhatsApp Account", whatsapp_account),
+    )
     account.check_permission("read")
     return validate_campaign_tracking_connection(account)

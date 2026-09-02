@@ -2,12 +2,14 @@
 # See license.txt
 
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
 from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_account.whatsapp_account import (
+	WhatsAppAccount,
 	validate_account_connection,
 	validate_campaign_tracking_connection,
 )
@@ -28,7 +30,7 @@ class _Account(SimpleNamespace):
 		return getattr(self, field, None)
 
 
-def _account(**kwargs):
+def _account(**kwargs) -> WhatsAppAccount:
 	defaults = {
 		"name": "test-account",
 		"url": "https://graph.facebook.com",
@@ -42,7 +44,7 @@ def _account(**kwargs):
 		"enable_campaign_tracking": 1,
 	}
 	defaults.update(kwargs)
-	return _Account(**defaults)
+	return cast(WhatsAppAccount, _Account(**defaults))
 
 
 _MOD = (
