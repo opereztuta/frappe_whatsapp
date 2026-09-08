@@ -391,7 +391,8 @@ def forward_incoming_to_app(*, incoming_message_doc):
 def forward_incoming_to_app_async(*, incoming_message_name: str):
     queue = (
         "default"
-        if frappe.db.get_value(
+        if frappe.db.has_column("WhatsApp Message", "referral_source_type")
+        and frappe.db.get_value(
             "WhatsApp Message",
             incoming_message_name,
             "referral_source_type",

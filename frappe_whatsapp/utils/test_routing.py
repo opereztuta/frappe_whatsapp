@@ -13,6 +13,7 @@ from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message i
 )
 from frappe_whatsapp.utils.routing import (
     forward_incoming_to_app,
+    forward_incoming_to_app_async,
     resolve_incoming_routed_app,
     serialize_incoming_message_for_forwarding,
 )
@@ -21,6 +22,7 @@ from frappe_whatsapp.utils.webhook import (
     _process_incoming_message,
     get_media_file_extension,
     normalize_media_mime_type,
+    process_webhook_payload,
 )
 
 
@@ -33,6 +35,115 @@ def _get_message_doc(name: Any) -> WhatsAppMessage:
 
 
 class TestRouting(FrappeTestCase):
+    def test_forward_queue_handles_missing_and_available_referral_column(self):
+        for has_column, source_type, expected_queue in (
+            (False, None, "short"),
+            (True, None, "short"),
+            (True, "ad", "default"),
+            (True, "post", "short"),
+        ):
+            with (
+                self.subTest(has_column=has_column, source_type=source_type),
+                patch.object(frappe.db, "has_column", return_value=has_column),
+                patch.object(
+                    frappe.db, "get_value", return_value=source_type,
+                ) as get_value,
+                patch("frappe.enqueue") as enqueue,
+            ):
+                forward_incoming_to_app_async(incoming_message_name="TEST-MSG")
+                enqueue.assert_called_once_with(
+                    "frappe_whatsapp.utils.routing."
+                    "forward_incoming_to_app_by_name",
+                    queue=expected_queue,
+                    incoming_message_name="TEST-MSG",
+                    enqueue_after_commit=True,
+                )
+                if not has_column:
+                    get_value.assert_not_called()
+
+    def test_forward_queue_propagates_database_errors(self):
+        error = frappe.db.OperationalError(2003, "connection unavailable")
+        with (
+            patch.object(frappe.db, "has_column", side_effect=error),
+            patch("frappe.enqueue") as enqueue,
+            self.assertRaises(frappe.db.OperationalError),
+        ):
+            forward_incoming_to_app_async(incoming_message_name="TEST-MSG")
+        enqueue.assert_not_called()
+
+    def test_system_event_does_not_block_next_message_or_change_identity(self):
+        app = self._create_client_app()
+        account = self._create_account(whatsapp_client_app=app.name)
+        suffix = frappe.generate_hash(length=8)
+        system_id, text_id = f"wamid.system.{suffix}", f"wamid.text.{suffix}"
+        system = {
+            "from": "15551230000", "id": system_id, "type": "system",
+            "system": {
+                "type": "user_changed_number", "wa_id": "15551239999",
+                "body": "User changed from 15551230000 to 15551239999",
+            },
+        }
+        payload = {"entry": [{"changes": [{"field": "messages", "value": {
+            "metadata": {"phone_number_id": "test-phone-id"},
+            "messages": [system, {
+                "from": "15551230001", "id": text_id, "type": "text",
+                "text": {"body": "Hello"},
+            }],
+        }}]}]}
+        with (
+            patch(
+                "frappe_whatsapp.utils.webhook.get_whatsapp_account",
+                return_value=account,
+            ),
+            patch(
+                "frappe_whatsapp.utils.webhook.is_contact_blocked",
+                return_value=False,
+            ),
+            patch(
+                "frappe_whatsapp.utils.webhook.resolve_incoming_routed_app",
+                return_value=app.name,
+            ) as route,
+            patch(
+                "frappe_whatsapp.utils.webhook._handle_consent_keywords",
+            ) as consent,
+            patch(
+                "frappe_whatsapp.utils.webhook._enqueue_language_detection",
+            ) as language,
+            patch(
+                "frappe_whatsapp.utils.webhook.forward_incoming_to_app_async",
+            ) as forward,
+            patch("frappe_whatsapp.utils.webhook.frappe.logger") as logger,
+        ):
+            # The system event alone must never reach any document write.
+            with patch("frappe.get_doc") as get_doc:
+                _process_incoming_message(
+                    message=system, whatsapp_account=account,
+                    sender_profile_name=None,
+                )
+                get_doc.assert_not_called()
+            for downstream in (route, consent, language, forward):
+                downstream.assert_not_called()
+            logger.reset_mock()
+            process_webhook_payload(payload)
+
+        self.assertFalse(frappe.db.exists(
+            "WhatsApp Message", {"message_id": system_id},
+        ))
+        message_name = frappe.db.get_value(
+            "WhatsApp Message", {"message_id": text_id}, "name",
+        )
+        self.assertTrue(message_name)
+        route.assert_called_once_with(
+            whatsapp_account=account.name, contact_number="15551230001",
+        )
+        consent.assert_called_once()
+        language.assert_called_once()
+        forward.assert_called_once_with(incoming_message_name=str(message_name))
+        warning = logger.return_value.warning.call_args.args[0]
+        self.assertIn(system_id, warning)
+        self.assertNotIn("15551230000", warning)
+        self.assertNotIn("15551239999", warning)
+
     def _create_client_app(
         self,
         *,

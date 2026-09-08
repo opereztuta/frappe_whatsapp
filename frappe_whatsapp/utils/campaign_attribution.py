@@ -20,6 +20,13 @@ ATTRIBUTION_CACHE_DOCTYPE = "WhatsApp Ad Attribution"
 MESSAGE_DOCTYPE = "WhatsApp Message"
 NOTIFICATION_LOG_DOCTYPE = "WhatsApp Notification Log"
 GRAPH_LOOKUP_TIMEOUT = 10
+ATTRIBUTION_MESSAGE_FIELDS = frozenset({
+    "referral_source_type", "referral_source_id", "referral_ctwa_clid",
+    "referral_payload", "meta_ad_name", "meta_ad_account_id",
+    "meta_adset_id", "meta_adset_name", "meta_campaign_id",
+    "meta_campaign_name", "attribution_status", "attribution_resolved_at",
+    "attribution_error",
+})
 
 
 class ReferralEvent(TypedDict):
@@ -191,6 +198,12 @@ def resolve_message_attribution(message_doc: Any) -> None:
     ad_id = str(message_doc.get("referral_source_id") or "")
     if not message_doc.get("referral_payload"):
         return
+    # A code deployment can precede schema migration. Retained webhook logs
+    # remain the source for a later backfill; do not block ordinary delivery.
+    if not ATTRIBUTION_MESSAGE_FIELDS.issubset(
+        frappe.db.get_table_columns(MESSAGE_DOCTYPE)
+    ):
+        return
     if source_type != "ad" or not ad_id:
         if message_doc.get("attribution_status") != "Not Applicable":
             _set_message_values(
@@ -218,6 +231,13 @@ def resolve_message_attribution(message_doc: Any) -> None:
             cache = _resolve_ad(account=account, ad_id=ad_id)
         _set_message_values(
             message_doc, _message_attribution_values(cache))
+    except (
+        frappe.db.OperationalError, frappe.db.InternalError,
+        frappe.db.ProgrammingError, frappe.db.DataError,
+    ):
+        # Connection failures, deadlocks and other database errors must reach
+        # the worker's transaction/retry handling rather than become ad errors.
+        raise
     except Exception as exc:
         error = _bounded_text(str(exc), 500) or type(exc).__name__
         _set_message_values(

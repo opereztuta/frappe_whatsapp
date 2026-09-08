@@ -334,6 +334,9 @@ bench --site <site> execute \
 Always review the preview counts before applying the backfill. The command is
 idempotent and preserves each WhatsApp Message's `modified` timestamp.
 
+See the [manual webhook reliability deployment guide](docs/webhook-reliability-deployment.md)
+for deployment checks, attribution auditing, and rollback steps.
+
 ### Contact Blocking and Spam Protection
 
 You can block unwanted WhatsApp contacts from **WhatsApp Profiles** or from an

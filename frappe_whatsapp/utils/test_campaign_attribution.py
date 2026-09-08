@@ -15,6 +15,7 @@ from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message i
     WhatsAppMessage,
 )
 from frappe_whatsapp.utils.campaign_attribution import (
+    ATTRIBUTION_MESSAGE_FIELDS,
     backfill_campaign_attribution,
     iter_webhook_referrals,
     normalize_referral,
@@ -54,6 +55,56 @@ def _graph_payload() -> dict[str, Any]:
 
 
 class TestCampaignAttribution(FrappeTestCase):
+    def test_missing_attribution_columns_preserve_referral_and_delivery(self):
+        account = self._account()
+        app = self._client_app()
+        message = self._message(account, referral=_referral())
+        message.routed_app = app.name
+        before = message.as_dict()
+        for missing in ATTRIBUTION_MESSAGE_FIELDS:
+            with (
+                self.subTest(missing=missing),
+                patch.object(
+                    frappe.db, "get_table_columns",
+                    return_value=list(ATTRIBUTION_MESSAGE_FIELDS - {missing}),
+                ),
+                patch(
+                    "frappe_whatsapp.utils.routing.frappe.get_doc",
+                    return_value=message,
+                ),
+                patch(
+                    "frappe_whatsapp.utils.routing.forward_incoming_to_app",
+                ) as forward,
+                patch(f"{_MOD}.request_meta_json") as request,
+                patch.object(frappe.db, "set_value") as set_value,
+            ):
+                forward_incoming_to_app_by_name(
+                    incoming_message_name=str(message.name),
+                )
+                forward.assert_called_once_with(incoming_message_doc=message)
+                request.assert_not_called()
+                set_value.assert_not_called()
+                self.assertEqual(message.as_dict(), before)
+
+    def test_unrelated_database_failure_is_not_recorded_as_ad_failure(self):
+        account = self._account()
+        message = self._message(account, referral=_referral())
+        for error_type in (
+            frappe.db.OperationalError, frappe.db.InternalError,
+            frappe.db.ProgrammingError, frappe.db.DataError,
+        ):
+            with (
+                self.subTest(error_type=error_type),
+                patch(
+                    f"{_MOD}._resolve_ad",
+                    side_effect=error_type("database failure"),
+                ),
+                patch.object(frappe.db, "set_value") as set_value,
+                self.assertRaises(error_type),
+            ):
+                resolve_message_attribution(message)
+            set_value.assert_not_called()
+
     def _account(self) -> WhatsAppAccount:
         suffix = frappe.generate_hash(length=8)
         return cast(
@@ -222,6 +273,8 @@ class TestCampaignAttribution(FrappeTestCase):
         account = self._account()
         message_id = f"wamid.{frappe.generate_hash(length=12)}"
         message = self._message(account, message_id=message_id)
+        message.reload()
+        original_modified = message.modified
         raw_payload = {
             "entry": [{
                 "changes": [{
@@ -233,9 +286,13 @@ class TestCampaignAttribution(FrappeTestCase):
             }]
         }
 
-        with patch(
-            f"{_MOD}._get_referral_log_rows",
-            return_value=[{"meta_data": json.dumps(raw_payload)}],
+        with (
+            patch(
+                f"{_MOD}._get_referral_log_rows",
+                return_value=[{"meta_data": json.dumps(raw_payload)}],
+            ),
+            patch("frappe.enqueue") as enqueue,
+            patch("frappe_whatsapp.utils.routing.make_post_request") as post,
         ):
             preview = backfill_campaign_attribution(dry_run=True)
             message.reload()
@@ -247,8 +304,13 @@ class TestCampaignAttribution(FrappeTestCase):
             message.reload()
             self.assertEqual(applied["updated"], 1)
             self.assertEqual(message.meta_campaign_id, "campaign-123")
+            self.assertEqual(message.modified, original_modified)
 
             repeated = backfill_campaign_attribution(dry_run=False)
             self.assertEqual(repeated["updated"], 0)
+            message.reload()
+            self.assertEqual(message.modified, original_modified)
+            enqueue.assert_not_called()
+            post.assert_not_called()
 
         mock_request.assert_called_once()
