@@ -49,7 +49,9 @@ DEFAULT_MEDIA_EXTENSION_BY_TYPE = {
     "video": "mp4",
 }
 
-_UNSUPPORTED_INCOMING_MESSAGE_TYPES = frozenset({"unsupported", "unknown"})
+_UNSUPPORTED_INCOMING_MESSAGE_TYPES = frozenset({
+    "unsupported", "unknown", "system",
+})
 
 
 def _normalize_unsupported_log_value(
@@ -1036,6 +1038,18 @@ def _is_trusted_waba_id(waba_id: str) -> bool:
     return bool(frappe.db.exists("WhatsApp Account", {"business_id": waba_id}))
 
 
+def _sync_templates_from_webhook() -> None:
+    """Internal worker for template events accepted by the trusted webhook."""
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates.whatsapp_templates import fetch  # noqa: E501
+
+    previous_user = cast(str, frappe.session.user)
+    try:
+        frappe.set_user("Administrator")
+        fetch()
+    finally:
+        frappe.set_user(previous_user)
+
+
 def _enqueue_template_sync() -> None:
     """Enqueue a background template sync from Meta.
 
@@ -1045,8 +1059,7 @@ def _enqueue_template_sync() -> None:
     with the same id is already pending.
     """
     frappe.enqueue(
-        "frappe_whatsapp.frappe_whatsapp.doctype."
-        "whatsapp_templates.whatsapp_templates.fetch",
+        "frappe_whatsapp.utils.webhook._sync_templates_from_webhook",
         queue="long",
         job_id="whatsapp_template_sync",
         deduplicate=True,

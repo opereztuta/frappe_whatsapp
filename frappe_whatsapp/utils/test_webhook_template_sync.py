@@ -27,13 +27,18 @@ Meta sends:
 Both shapes are normalized to a list internally and must work identically.
 """
 
+from typing import cast
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_account.whatsapp_account import (
+    WhatsAppAccount,
+)
 from frappe_whatsapp.utils.webhook import (
     _is_trusted_waba_id,
+    _sync_templates_from_webhook,
     process_webhook_payload,
     update_status,
 )
@@ -52,15 +57,15 @@ def _create_whatsapp_account(
     account_name: str | None = None,
     phone_id: str | None = None,
     is_default_incoming: int = 0,
-):
+) -> WhatsAppAccount:
     suffix = frappe.generate_hash(length=8)
-    return frappe.get_doc({
+    return cast(WhatsAppAccount, frappe.get_doc({
         "doctype": "WhatsApp Account",
         "account_name": account_name or f"Webhook Test Account {suffix}",
         "status": "Active",
         "phone_id": phone_id or f"phone-{suffix}",
         "is_default_incoming": is_default_incoming,
-    }).insert(ignore_permissions=True)
+    }).insert(ignore_permissions=True))
 
 # ---------------------------------------------------------------------------
 # Fixtures — list-shaped entry (standard Meta shape)
@@ -185,9 +190,54 @@ def _assert_sync_enqueue(test_case, mock_enqueue):
     )
     test_case.assertEqual(
         mock_enqueue.call_args.args[0],
-        "frappe_whatsapp.frappe_whatsapp.doctype."
-        "whatsapp_templates.whatsapp_templates.fetch",
+        "frappe_whatsapp.utils.webhook._sync_templates_from_webhook",
     )
+    test_case.assertEqual(kwargs["queue"], "long")
+    test_case.assertTrue(kwargs["enqueue_after_commit"])
+
+
+class TestTemplateSyncWorker(FrappeTestCase):
+    def test_guest_worker_fetches_templates_and_restores_user(self):
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates import (
+            whatsapp_templates,
+        )
+
+        previous_user = cast(str, frappe.session.user)
+        self.addCleanup(frappe.set_user, previous_user)
+        frappe.set_user("Guest")
+        # Frappe bypasses only_for() while in_test is set. Exercise the real
+        # production permission boundary for both worker and public endpoint.
+        with (
+            patch.dict(frappe.local.flags, in_test=False),
+            patch.object(frappe, "get_all", return_value=[]) as get_accounts,
+        ):
+            _sync_templates_from_webhook()
+        get_accounts.assert_any_call(
+            "WhatsApp Account", filters={"status": "Active"}, fields=["name"],
+        )
+        self.assertEqual(frappe.session.user, "Guest")
+        self.assertNotIn(_sync_templates_from_webhook, frappe.whitelisted)
+        with (
+            patch.dict(frappe.local.flags, in_test=False),
+            self.assertRaises(frappe.PermissionError),
+        ):
+            whatsapp_templates.fetch()
+
+    def test_failed_sync_restores_guest_and_propagates_error(self):
+        previous_user = cast(str, frappe.session.user)
+        self.addCleanup(frappe.set_user, previous_user)
+        frappe.set_user("Guest")
+
+        def fail_fetch():
+            self.assertEqual(frappe.session.user, "Administrator")
+            raise RuntimeError("sync failed")
+
+        with patch(
+            "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_templates."
+            "whatsapp_templates.fetch", side_effect=fail_fetch,
+        ), self.assertRaisesRegex(RuntimeError, "sync failed"):
+            _sync_templates_from_webhook()
+        self.assertEqual(frappe.session.user, "Guest")
 
 
 # ===========================================================================
@@ -316,20 +366,20 @@ class TestPhoneIdAccountResolution(FrappeTestCase):
             phone_id=f"dr-{frappe.generate_hash(length=8)}",
         )
 
-        self.assertEqual(
-            get_whatsapp_account(us.phone_id).name,
-            us.name,
-        )
-        self.assertEqual(
-            get_whatsapp_account(admission.phone_id).name,
-            admission.name,
-        )
+        resolved_us = get_whatsapp_account(us.phone_id)
+        resolved_admission = get_whatsapp_account(admission.phone_id)
+        assert resolved_us is not None
+        assert resolved_admission is not None
+        self.assertEqual(resolved_us.name, us.name)
+        self.assertEqual(resolved_admission.name, admission.name)
 
     def test_unknown_explicit_phone_id_does_not_fallback_to_default(self):
         default = _create_whatsapp_account(is_default_incoming=1)
 
         self.assertIsNone(get_whatsapp_account("missing-phone-id"))
-        self.assertEqual(get_whatsapp_account().name, default.name)
+        resolved_default = get_whatsapp_account()
+        assert resolved_default is not None
+        self.assertEqual(resolved_default.name, default.name)
 
 
 # ===========================================================================
