@@ -9,6 +9,10 @@
 
 # Frappe WhatsApp
 
+Business-scoped user ID support, client webhook v2, rollout guidance, and the
+CRM/PBX handoff are documented in
+[docs/business-scoped-user-ids.md](docs/business-scoped-user-ids.md).
+
 [Documentation](https://shridarpatil.github.io/frappe_whatsapp/)
 
 WhatsApp integration for Frappe/ERPNext. Use Meta's WhatsApp Cloud API directly without any third-party integration.

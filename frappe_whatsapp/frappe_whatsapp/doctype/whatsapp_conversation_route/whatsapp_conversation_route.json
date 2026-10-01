@@ -1,12 +1,13 @@
 {
  "actions": [],
- "autoname": "format:{contact_number}-{whatsapp_account}",
+  "autoname": "hash",
  "creation": "2026-01-21 16:15:50.417094",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "whatsapp_account",
-  "contact_number",
+    "whatsapp_account",
+    "contact_profile",
+    "contact_number",
   "last_source_app",
   "last_outgoing_message",
   "last_outgoing_at"
@@ -18,11 +19,18 @@
    "label": "WhatsApp Account",
    "options": "WhatsApp Account"
   },
-  {
-   "fieldname": "contact_number",
+    {
+      "fieldname": "contact_number",
    "fieldtype": "Data",
-   "label": "Contact Number"
-  },
+      "label": "Contact Number"
+    },
+    {
+      "fieldname": "contact_profile",
+      "fieldtype": "Link",
+      "label": "WhatsApp Profile",
+      "options": "WhatsApp Profiles",
+      "search_index": 1
+    },
   {
    "fieldname": "last_source_app",
    "fieldtype": "Link",

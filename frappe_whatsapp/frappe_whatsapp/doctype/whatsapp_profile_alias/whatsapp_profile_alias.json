@@ -1,0 +1,35 @@
+{
+ "actions": [],
+ "autoname": "field:alias_key",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "alias_key",
+  "whatsapp_profile",
+  "identity_scope",
+  "alias_type",
+  "alias_value",
+  "is_current",
+  "whatsapp_account"
+ ],
+ "fields": [
+  {"fieldname": "alias_key", "fieldtype": "Data", "label": "Alias Key", "reqd": 1, "unique": 1},
+  {"fieldname": "whatsapp_profile", "fieldtype": "Link", "label": "WhatsApp Profile", "options": "WhatsApp Profiles", "reqd": 1, "search_index": 1},
+  {"fieldname": "identity_scope", "fieldtype": "Data", "label": "Identity Scope", "reqd": 1, "search_index": 1},
+  {"fieldname": "alias_type", "fieldtype": "Select", "label": "Alias Type", "options": "phone\nuser_id\nparent_user_id", "reqd": 1, "search_index": 1},
+  {"fieldname": "alias_value", "fieldtype": "Data", "label": "Alias Value", "length": 191, "reqd": 1, "search_index": 1},
+  {"default": "1", "fieldname": "is_current", "fieldtype": "Check", "label": "Current"},
+  {"fieldname": "whatsapp_account", "fieldtype": "Link", "label": "First Seen Account", "options": "WhatsApp Account"}
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "module": "Frappe Whatsapp",
+ "name": "WhatsApp Profile Alias",
+ "naming_rule": "By fieldname",
+ "permissions": [
+  {"create": 1, "delete": 1, "email": 1, "export": 1, "print": 1, "read": 1, "report": 1, "role": "System Manager", "share": 1, "write": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

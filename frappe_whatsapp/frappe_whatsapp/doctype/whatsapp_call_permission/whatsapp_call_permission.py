@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from frappe.model.document import Document
+import frappe
 
 
 class WhatsAppCallPermission(Document):
@@ -23,4 +24,10 @@ class WhatsAppCallPermission(Document):
         response_source: DF.Data | None
         whatsapp_account: DF.Link
     # end: auto-generated types
+
+    def autoname(self):
+        if self.phone_number:
+            self.name = f"{self.phone_number}-{self.whatsapp_account}"
+        else:
+            self.name = frappe.generate_hash(length=20)
     pass

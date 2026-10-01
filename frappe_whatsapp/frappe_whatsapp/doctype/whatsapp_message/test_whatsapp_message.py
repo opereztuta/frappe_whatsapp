@@ -231,6 +231,68 @@ class TestWhatsAppMessage(FrappeTestCase):
         self.assertEqual(str(raised.exception), "specific Meta failure")
         self.assertNotIn("Failed to send template message", str(raised.exception))
 
+    def test_contact_request_uses_meta_request_contact_info_shape(self):
+        message = WhatsAppMessage({
+            "doctype": "WhatsApp Message",
+            "type": "Outgoing",
+            "recipient": "US.13491208655302741918",
+            "content_type": "contact_request",
+            "message": "Please share your number.",
+            "message_type": "Manual",
+            "whatsapp_account": "Test Account",
+        })
+
+        with patch.object(message, "set_whatsapp_account"), patch.object(
+            message, "_check_consent"
+        ), patch(
+            "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
+            "whatsapp_message.get_service_window_status",
+            return_value=(True, ""),
+        ), patch.object(message, "notify") as mock_notify, patch.object(
+            message, "create_whatsapp_profile"
+        ):
+            message.before_insert()
+
+        payload = mock_notify.call_args.args[0]
+        self.assertNotIn("to", payload)
+        self.assertEqual(payload["recipient"], "US.13491208655302741918")
+        self.assertEqual(payload["type"], "interactive")
+        self.assertEqual(
+            payload["interactive"],
+            {
+                "type": "request_contact_info",
+                "body": {"text": "Please share your number."},
+                "action": {"name": "request_contact_info"},
+            },
+        )
+
+    @patch(
+        "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
+        "whatsapp_message.enforce_template_send_rules"
+    )
+    @patch(
+        "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
+        "whatsapp_message.enforce_marketing_template_compliance"
+    )
+    @patch(
+        "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
+        "whatsapp_message.frappe.get_doc"
+    )
+    def test_authentication_template_rejects_bsuid_only_recipient(
+        self, mock_get_doc, _mock_compliance, _mock_rules
+    ):
+        mock_get_doc.return_value = self._template(category="AUTHENTICATION")
+        message = self._template_message(
+            to=None,
+            recipient="US.13491208655302741918",
+        )
+
+        with patch.object(message, "notify") as mock_notify:
+            with self.assertRaises(frappe.ValidationError):
+                message.send_template()
+
+        mock_notify.assert_not_called()
+
     def test_upload_local_audio_to_whatsapp_uses_media_endpoint(self):
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
             f.write(b"OggS fake test audio")

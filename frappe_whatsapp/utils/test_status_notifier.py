@@ -409,14 +409,20 @@ class TestMaybeEnqueueStatusNotification(FrappeTestCase):
         )
         doc.get_doc_before_save = lambda: prev_doc
 
-        on_whatsapp_message_on_update(doc)
+        with patch(
+            "frappe_whatsapp.utils.client_delivery.queue_client_event"
+        ) as mock_queue:
+            on_whatsapp_message_on_update(doc)
 
-        log_name = frappe.db.get_value(
-            STATUS_WEBHOOK_LOG_DOCTYPE,
-            {"message_name": doc.name, "current_status": "delivered"},
-            "name",
+        mock_queue.assert_called_once()
+        self.assertEqual(
+            mock_queue.call_args.kwargs["event_id"],
+            _build_event_id(doc.name, "delivered"),
         )
-        self.assertIsNotNone(log_name)
+        self.assertEqual(
+            mock_queue.call_args.kwargs["event_type"],
+            "whatsapp.message_status",
+        )
 
     def test_on_update_skips_when_status_unchanged(self):
         prev_doc = _mock_msg(status="delivered")
@@ -852,7 +858,7 @@ class TestDeliverStatusNotification(FrappeTestCase):
         log = self._log(current_status="delivered", previous_status="sent")
         deliver_status_notification(str(log.name))
 
-        body = mock_post.call_args.kwargs["json"]
+        body = json.loads(mock_post.call_args.kwargs["data"])
         self.assertEqual(body["event"], "whatsapp.message_status")
         self.assertIn("event_id", body)
         self.assertIn("occurred_at", body)

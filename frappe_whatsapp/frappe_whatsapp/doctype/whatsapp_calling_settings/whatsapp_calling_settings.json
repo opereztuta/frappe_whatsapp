@@ -17,6 +17,7 @@
   "agent_channel_template",
   "destination_context",
   "destination_number_template"
+  ,"identity_destination_extension"
  ],
  "fields": [
   {
@@ -97,6 +98,12 @@
    "fieldname": "destination_number_template",
    "fieldtype": "Data",
    "label": "Destination Number Template"
+  },
+  {
+   "description": "Fixed dialplan extension used for BSUID-only calls. The recipient is passed through WHATSAPP_RECIPIENT_* AMI variables.",
+   "fieldname": "identity_destination_extension",
+   "fieldtype": "Data",
+   "label": "BSUID Destination Extension"
   }
  ],
  "grid_page_length": 50,

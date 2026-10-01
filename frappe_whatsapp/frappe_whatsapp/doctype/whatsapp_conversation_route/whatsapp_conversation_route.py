@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Shridhar Patil and contributors
 # For license information, please see license.txt
 
-# import frappe
+import frappe
 from frappe.model.document import Document
 
 
@@ -20,4 +20,8 @@ class WhatsAppConversationRoute(Document):
 		last_source_app: DF.Link | None
 		whatsapp_account: DF.Link | None
 	# end: auto-generated types
-	pass
+	def autoname(self):
+		if self.contact_number:
+			self.name = f"{self.contact_number}-{self.whatsapp_account}"
+		else:
+			self.name = frappe.generate_hash(length=20)
