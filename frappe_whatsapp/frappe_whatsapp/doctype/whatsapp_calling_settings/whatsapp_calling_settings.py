@@ -22,6 +22,7 @@ class WhatsAppCallingSettings(Document):
         destination_context: DF.Data | None
         destination_number_template: DF.Data | None
         enabled: DF.Check
+        identity_destination_extension: DF.Data | None
         originate_timeout: DF.Int
     # end: auto-generated types
     pass

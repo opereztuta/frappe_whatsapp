@@ -16,8 +16,8 @@
   "routing_section",
   "agent_channel_template",
   "destination_context",
-  "destination_number_template"
-  ,"identity_destination_extension"
+  "destination_number_template",
+  "identity_destination_extension"
  ],
  "fields": [
   {
@@ -109,8 +109,8 @@
  "grid_page_length": 50,
  "issingle": 1,
  "links": [],
- "modified": "2026-07-14 16:32:00.906934",
- "modified_by": "operez@zoni.edu",
+ "modified": "2026-10-01 16:26:13.727549",
+ "modified_by": "Administrator",
  "module": "Frappe Whatsapp",
  "name": "WhatsApp Calling Settings",
  "owner": "Administrator",

@@ -2,6 +2,22 @@ from frappe.model.document import Document
 
 
 class WhatsAppProfileAlias(Document):
+    # begin: auto-generated types
+    # This code is auto-generated. Do not modify anything in this block.
+
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from frappe.types import DF
+
+        alias_key: DF.Data
+        alias_type: DF.Literal["phone", "user_id", "parent_user_id"]
+        alias_value: DF.Data
+        identity_scope: DF.Data
+        is_current: DF.Check
+        whatsapp_account: DF.Link | None
+        whatsapp_profile: DF.Link
+    # end: auto-generated types
     def before_validate(self) -> None:
         from frappe_whatsapp.utils.identity import (
             alias_key,

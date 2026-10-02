@@ -15,6 +15,7 @@ class WhatsAppConversationRoute(Document):
 		from frappe.types import DF
 
 		contact_number: DF.Data | None
+		contact_profile: DF.Link | None
 		last_outgoing_at: DF.Datetime | None
 		last_outgoing_message: DF.Data | None
 		last_source_app: DF.Link | None

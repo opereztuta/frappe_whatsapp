@@ -1,8 +1,7 @@
 {
  "actions": [],
- "allow_rename": 0,
  "autoname": "field:state_key",
- "creation": "2026-10-01 00:00:00.000000",
+ "creation": "2026-10-01 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -116,9 +115,8 @@
    "options": "WhatsApp Profile Consent"
   }
  ],
- "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-01 00:00:00.000000",
+ "modified": "2026-10-02 10:45:15.088438",
  "modified_by": "Administrator",
  "module": "Frappe Whatsapp",
  "name": "WhatsApp Profile Account State",
@@ -138,6 +136,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
