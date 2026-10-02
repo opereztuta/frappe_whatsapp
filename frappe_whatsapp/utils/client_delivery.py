@@ -5,11 +5,18 @@ import hmac
 import json
 import time
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 import frappe
 import requests
 from frappe.utils import add_to_date, now_datetime
+
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_client_app.whatsapp_client_app import (
+    WhatsAppClientApp,
+)
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_client_webhook_delivery.whatsapp_client_webhook_delivery import (
+    WhatsAppClientWebhookDelivery,
+)
 
 
 DELIVERY_DOCTYPE = "WhatsApp Client Webhook Delivery"
@@ -30,7 +37,10 @@ def queue_client_event(
 ) -> str | None:
     if not client_app or not frappe.db.table_exists(DELIVERY_DOCTYPE):
         return None
-    app = frappe.get_doc("WhatsApp Client App", client_app)
+    app = cast(
+        WhatsAppClientApp,
+        frappe.get_doc("WhatsApp Client App", client_app),
+    )
     if not app.enabled or not _subscribed(app, event_type):
         return None
     envelope = {
@@ -102,10 +112,16 @@ def _headers(app: Any, event_id: str, body: bytes) -> dict[str, str]:
 
 
 def deliver_client_event(delivery_name: str) -> None:
-    delivery = frappe.get_doc(DELIVERY_DOCTYPE, delivery_name)
+    delivery = cast(
+        WhatsAppClientWebhookDelivery,
+        frappe.get_doc(DELIVERY_DOCTYPE, delivery_name),
+    )
     if delivery.delivery_status in {"Delivered", "Skipped"}:
         return
-    app = frappe.get_doc("WhatsApp Client App", delivery.client_app)
+    app = cast(
+        WhatsAppClientApp,
+        frappe.get_doc("WhatsApp Client App", delivery.client_app),
+    )
     url = _url(app, str(delivery.event_type))
     if not app.enabled or not url:
         delivery.db_set({"delivery_status": "Skipped", "next_retry_at": None})

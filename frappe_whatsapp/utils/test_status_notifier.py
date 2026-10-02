@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, call, patch
 
 import frappe
 import requests
+from frappe.core.doctype.error_log.error_log import ErrorLog
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_to_date, now_datetime
 
@@ -417,7 +418,7 @@ class TestMaybeEnqueueStatusNotification(FrappeTestCase):
         mock_queue.assert_called_once()
         self.assertEqual(
             mock_queue.call_args.kwargs["event_id"],
-            _build_event_id(doc.name, "delivered"),
+            _build_event_id(str(doc.name), "delivered"),
         )
         self.assertEqual(
             mock_queue.call_args.kwargs["event_type"],
@@ -783,7 +784,10 @@ class TestDeliverStatusNotification(FrappeTestCase):
             order_by="creation desc",
         )
         self.assertIsNotNone(error_log_name)
-        error_log = frappe.get_doc("Error Log", str(error_log_name))
+        error_log = cast(
+            ErrorLog,
+            frappe.get_doc("Error Log", str(error_log_name)),
+        )
         self.assertLessEqual(len(str(error_log.method)), 140)
         self.assertIn(str(log.name), str(error_log.error))
         self.assertIn("HTTP 502", str(error_log.error))

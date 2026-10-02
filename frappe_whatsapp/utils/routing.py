@@ -356,7 +356,7 @@ def _message_identity(incoming_message_doc: WhatsAppMessage) -> dict[str, Any]:
     if profile_name:
         from frappe_whatsapp.utils.identity import profile_identity
         return profile_identity(
-            frappe.get_doc("WhatsApp Profiles", profile_name)
+            frappe.get_doc("WhatsApp Profiles", str(profile_name))
         )
     return {
         "profile_id": None,

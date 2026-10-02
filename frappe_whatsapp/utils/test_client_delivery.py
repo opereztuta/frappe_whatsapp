@@ -3,11 +3,16 @@ from __future__ import annotations
 import hashlib
 import hmac
 import time
+from typing import cast
 from unittest.mock import patch
 
 import frappe
 import requests
 from frappe.tests.utils import FrappeTestCase
+
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_client_webhook_delivery.whatsapp_client_webhook_delivery import (
+    WhatsAppClientWebhookDelivery,
+)
 
 from frappe_whatsapp.utils.client_delivery import (
     deliver_client_event,
@@ -41,7 +46,7 @@ class TestClientWebhookDelivery(FrappeTestCase):
         }).insert(ignore_permissions=True)
         name = queue_client_event(
             client_app=app.name,
-            whatsapp_account=account.name,
+            whatsapp_account=str(account.name),
             event_type="whatsapp.incoming",
             event_id=event_id or frappe.generate_hash(length=24),
             payload={"message": {"message_id": "wamid.test"}},
@@ -52,8 +57,9 @@ class TestClientWebhookDelivery(FrappeTestCase):
     def test_delivery_resolves_current_url_and_signs_exact_body(self):
         app = self._app(url="https://old.example.com/inbound")
         delivery_name = self._queue(app)
-        delivery = frappe.get_doc(
-            "WhatsApp Client Webhook Delivery", delivery_name
+        delivery = cast(
+            WhatsAppClientWebhookDelivery,
+            frappe.get_doc("WhatsApp Client Webhook Delivery", delivery_name),
         )
         app.db_set(
             "inbound_webhook_url",
@@ -105,11 +111,13 @@ class TestClientWebhookDelivery(FrappeTestCase):
             deliver_client_event(retry_name)
             deliver_client_event(terminal_name)
 
-        retry = frappe.get_doc(
-            "WhatsApp Client Webhook Delivery", retry_name
+        retry = cast(
+            WhatsAppClientWebhookDelivery,
+            frappe.get_doc("WhatsApp Client Webhook Delivery", retry_name),
         )
-        terminal = frappe.get_doc(
-            "WhatsApp Client Webhook Delivery", terminal_name
+        terminal = cast(
+            WhatsAppClientWebhookDelivery,
+            frappe.get_doc("WhatsApp Client Webhook Delivery", terminal_name),
         )
         self.assertEqual(retry.delivery_status, "Failed")
         self.assertTrue(retry.next_retry_at)
@@ -126,8 +134,9 @@ class TestClientWebhookDelivery(FrappeTestCase):
         ):
             deliver_client_event(delivery_name)
 
-        delivery = frappe.get_doc(
-            "WhatsApp Client Webhook Delivery", delivery_name
+        delivery = cast(
+            WhatsAppClientWebhookDelivery,
+            frappe.get_doc("WhatsApp Client Webhook Delivery", delivery_name),
         )
         self.assertEqual(delivery.delivery_status, "Failed")
         self.assertEqual(delivery.attempts, 1)

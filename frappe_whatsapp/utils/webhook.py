@@ -1404,7 +1404,7 @@ def update_message_status(data, whatsapp_account=None):
                 str(raw_phone) if str(raw_phone or "").isdigit() else None
             )
         if doc.meta.has_field("status_contacts"):
-            doc.status_contacts = {"contacts": contacts}
+            doc.status_contacts = json.dumps({"contacts": contacts})
         doc.status = status
         if conversation:
             doc.conversation_id = conversation

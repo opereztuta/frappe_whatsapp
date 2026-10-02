@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from typing import cast
+
 import frappe
+
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_profiles.whatsapp_profiles import (
+    WhatsAppProfiles,
+)
 
 from frappe_whatsapp.utils.identity import (
     ALIAS_DOCTYPE,
@@ -158,7 +164,7 @@ def _clone_profile_for_scope(
     source_profile: str, account: str, scope: str
 ) -> str:
     source = frappe.get_doc("WhatsApp Profiles", source_profile)
-    clone = frappe.copy_doc(source)
+    clone = cast(WhatsAppProfiles, frappe.copy_doc(source))
     clone.name = None
     clone.whatsapp_account = account
     clone.identity_scope = scope

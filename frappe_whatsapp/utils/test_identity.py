@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 import json
+from typing import Protocol, cast
 from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
+
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import (
+    WhatsAppMessage,
+)
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_profile_alias.whatsapp_profile_alias import (
+    WhatsAppProfileAlias,
+)
+from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_profiles.whatsapp_profiles import (
+    WhatsAppProfiles,
+)
 
 from frappe_whatsapp.utils.identity import (
     apply_user_id_update,
@@ -23,16 +34,26 @@ from frappe_whatsapp.utils.routing import (
 )
 
 
+class _AccountFixture(Protocol):
+    name: str
+    phone_id: str
+
+
 class TestBusinessScopedIdentity(FrappeTestCase):
-    def _account(self, *, portfolio_id: str | None = None):
+    def _account(
+        self, *, portfolio_id: str | None = None
+    ) -> _AccountFixture:
         suffix = frappe.generate_hash(length=8)
-        return frappe.get_doc({
-            "doctype": "WhatsApp Account",
-            "account_name": f"BSUID Test {suffix}",
-            "status": "Active",
-            "phone_id": f"bsuid-phone-{suffix}",
-            "business_portfolio_id": portfolio_id,
-        }).insert(ignore_permissions=True)
+        return cast(
+            _AccountFixture,
+            frappe.get_doc({
+                "doctype": "WhatsApp Account",
+                "account_name": f"BSUID Test {suffix}",
+                "status": "Active",
+                "phone_id": f"bsuid-phone-{suffix}",
+                "business_portfolio_id": portfolio_id,
+            }).insert(ignore_permissions=True),
+        )
 
     def test_meta_recipient_prefers_phone_and_supports_parent_id(self):
         payload = {"recipient": "US.13491208655302741918"}
@@ -94,9 +115,12 @@ class TestBusinessScopedIdentity(FrappeTestCase):
             ("user_id", user_id),
             ("parent_user_id", parent_user_id),
         ):
-            alias = frappe.get_doc(
-                "WhatsApp Profile Alias",
-                alias_key(scope, alias_type, value),
+            alias = cast(
+                WhatsAppProfileAlias,
+                frappe.get_doc(
+                    "WhatsApp Profile Alias",
+                    alias_key(scope, alias_type, value),
+                ),
             )
             self.assertEqual(alias.whatsapp_profile, profile.name)
             self.assertEqual(alias.is_current, 1)
@@ -424,10 +448,13 @@ class TestBusinessScopedIdentity(FrappeTestCase):
             }],
         })
 
-        message = frappe.get_doc(
-            "WhatsApp Message",
-            frappe.db.get_value(
-                "WhatsApp Message", {"message_id": message_id}, "name"
+        message = cast(
+            WhatsAppMessage,
+            frappe.get_doc(
+                "WhatsApp Message",
+                str(frappe.db.get_value(
+                    "WhatsApp Message", {"message_id": message_id}, "name"
+                )),
             ),
         )
         self.assertFalse(message.get("from"))
@@ -466,14 +493,20 @@ class TestBusinessScopedIdentity(FrappeTestCase):
             }]}],
         })
 
-        message = frappe.get_doc(
-            "WhatsApp Message",
-            frappe.db.get_value(
-                "WhatsApp Message", {"message_id": message_id}, "name"
+        message = cast(
+            WhatsAppMessage,
+            frappe.get_doc(
+                "WhatsApp Message",
+                str(frappe.db.get_value(
+                    "WhatsApp Message", {"message_id": message_id}, "name"
+                )),
             ),
         )
-        profile = frappe.get_doc(
-            "WhatsApp Profiles", message.contact_profile
+        profile = cast(
+            WhatsAppProfiles,
+            frappe.get_doc(
+                "WhatsApp Profiles", str(message.contact_profile)
+            ),
         )
         self.assertEqual(message.contact_origin, "contact_request")
         forwarded = serialize_incoming_message_for_forwarding(
@@ -502,15 +535,18 @@ class TestBusinessScopedIdentity(FrappeTestCase):
             "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
             "whatsapp_message.WhatsAppMessage.notify"
         ):
-            message = frappe.get_doc({
-                "doctype": "WhatsApp Message",
-                "type": "Outgoing",
-                "to": "16505551234",
-                "message": "hello",
-                "message_id": message_id,
-                "content_type": "text",
-                "whatsapp_account": account.name,
-            }).insert(ignore_permissions=True)
+            message = cast(
+                WhatsAppMessage,
+                frappe.get_doc({
+                    "doctype": "WhatsApp Message",
+                    "type": "Outgoing",
+                    "to": "16505551234",
+                    "message": "hello",
+                    "message_id": message_id,
+                    "content_type": "text",
+                    "whatsapp_account": account.name,
+                }).insert(ignore_permissions=True),
+            )
         user_id = "US.13491208655302741918"
         parent_user_id = "US.ENT.11815799212886844830"
         contacts = [{
@@ -543,5 +579,5 @@ class TestBusinessScopedIdentity(FrappeTestCase):
         self.assertEqual(message.recipient_user_id, user_id)
         self.assertEqual(message.recipient_parent_user_id, parent_user_id)
         self.assertEqual(
-            json.loads(message.status_contacts), {"contacts": contacts}
+            json.loads(str(message.status_contacts)), {"contacts": contacts}
         )

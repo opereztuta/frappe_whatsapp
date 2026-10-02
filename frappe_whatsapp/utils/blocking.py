@@ -206,6 +206,7 @@ def _upsert_local_block(
 
     name = frappe.db.get_value(BLOCKED_CONTACT_DOCTYPE, filters, "name")
     if name:
+        name = str(name)
         frappe.db.set_value(
             BLOCKED_CONTACT_DOCTYPE,
             name,

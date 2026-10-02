@@ -8,12 +8,17 @@ import hashlib
 import frappe
 from frappe import _
 from frappe.utils import now_datetime, time_diff_in_hours
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from frappe_whatsapp.utils import format_number
 
 
 ACCOUNT_STATE_DOCTYPE = "WhatsApp Profile Account State"
+
+if TYPE_CHECKING:
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_profile_account_state.whatsapp_profile_account_state import (
+        WhatsAppProfileAccountState,
+    )
 
 
 def _account_state_key(profile: str, whatsapp_account: str) -> str:
@@ -24,11 +29,14 @@ def _account_state_key(profile: str, whatsapp_account: str) -> str:
 def get_or_create_account_state(
     profile: str,
     whatsapp_account: str,
-):
+) -> "WhatsAppProfileAccountState":
     """Return account-specific consent state, seeding legacy profile data."""
     key = _account_state_key(profile, whatsapp_account)
     if frappe.db.exists(ACCOUNT_STATE_DOCTYPE, key):
-        return frappe.get_doc(ACCOUNT_STATE_DOCTYPE, key)
+        return cast(
+            "WhatsAppProfileAccountState",
+            frappe.get_doc(ACCOUNT_STATE_DOCTYPE, key),
+        )
 
     profile_doc = frappe.get_doc("WhatsApp Profiles", profile)
     state = frappe.get_doc({
@@ -56,9 +64,15 @@ def get_or_create_account_state(
             "consent_method": row.consent_method,
         })
     try:
-        return state.insert(ignore_permissions=True)
+        return cast(
+            "WhatsAppProfileAccountState",
+            state.insert(ignore_permissions=True),
+        )
     except frappe.UniqueValidationError:
-        return frappe.get_doc(ACCOUNT_STATE_DOCTYPE, key)
+        return cast(
+            "WhatsAppProfileAccountState",
+            frappe.get_doc(ACCOUNT_STATE_DOCTYPE, key),
+        )
 
 
 def get_compliance_settings() -> Any:
@@ -487,7 +501,7 @@ def _category_opt_out(
 
     _log_consent(
         profile=profile_id,
-        phone_number=(
+        phone_number=str(
             frappe.db.get_value("WhatsApp Profiles", profile_id, "number")
             or ""
         ),

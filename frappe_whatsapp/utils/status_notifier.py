@@ -547,7 +547,10 @@ def queue_status_notification(
     if not source_app:
         return
     try:
-        app_doc = frappe.get_doc("WhatsApp Client App", source_app)
+        app_doc = cast(
+            "WhatsAppClientApp",
+            frappe.get_doc("WhatsApp Client App", source_app),
+        )
     except frappe.DoesNotExistError:
         return
     if not app_doc.enabled or not (

@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, cast
 
 import frappe
 
 from frappe_whatsapp.utils import format_number
+
+if TYPE_CHECKING:
+    from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_profile_account_state.whatsapp_profile_account_state import (
+        WhatsAppProfileAccountState,
+    )
 
 
 PROFILE_DOCTYPE = "WhatsApp Profiles"
@@ -164,12 +169,13 @@ def _merge_profiles(survivor: str, duplicates: Iterable[str]) -> None:
             update_modified=False,
         )
 
-        restrictive = frappe.db.get_value(
+        restrictive_rows = frappe.get_all(
             PROFILE_DOCTYPE,
-            duplicate,
-            ["is_opted_out", "do_not_contact"],
-            as_dict=True,
-        ) or {}
+            filters={"name": duplicate},
+            fields=["is_opted_out", "do_not_contact"],
+            limit=1,
+        )
+        restrictive = restrictive_rows[0] if restrictive_rows else {}
         if restrictive.get("is_opted_out"):
             frappe.db.set_value(
                 PROFILE_DOCTYPE, survivor, "is_opted_out", 1,
@@ -194,7 +200,10 @@ def _merge_account_consent_states(survivor: str, duplicate: str) -> None:
         fields=["name", "whatsapp_account"],
     )
     for row in states:
-        duplicate_state = frappe.get_doc(state_doctype, row.name)
+        duplicate_state = cast(
+            "WhatsAppProfileAccountState",
+            frappe.get_doc(state_doctype, row.name),
+        )
         survivor_state = get_or_create_account_state(
             survivor, str(row.whatsapp_account)
         )
@@ -425,7 +434,7 @@ def apply_user_id_update(
     for key in previous_keys:
         profile_name = frappe.db.get_value(ALIAS_DOCTYPE, key, "whatsapp_profile")
         if profile_name:
-            profile = frappe.get_doc(PROFILE_DOCTYPE, profile_name)
+            profile = frappe.get_doc(PROFILE_DOCTYPE, str(profile_name))
             break
     if profile:
         for alias_type, value in _aliases(identity):
