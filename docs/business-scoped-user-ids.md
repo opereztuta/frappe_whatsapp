@@ -162,6 +162,10 @@ events.
 
 ## CRM team handoff
 
+The decision-complete CRM schema, endpoint, migration, conflict-quarantine,
+outbound, calling, and direct-cutover contract is in
+[Zoni CRM Service: business-scoped WhatsApp user IDs](./zoni-crm-bsuid.md).
+
 Do not deploy BSUID-only delivery until `zoni_crm_service` has all of these
 backward-compatible changes:
 
@@ -172,8 +176,9 @@ backward-compatible changes:
    `(crm_provider_channel_id, identity_type, identity_value)`. Backfill phone
    aliases and use this table as the deduplication authority.
 4. Accept `providerIdentityAliases`, `providerUserHandle`, and
-   `providerEventId` on lead creation. Merge aliases only when one explicit
-   event supplies their association.
+   `providerEventId` on lead creation. Link aliases only when one explicit
+   event supplies their association. Quarantine a linking event when its
+   aliases already resolve to multiple CRM leads; do not auto-merge leads.
 5. Implement `apis/leads/providerUser/identityUpdate`, retaining previous and
    current regular/parent aliases on the same lead.
 6. Select phone `to` when available and otherwise BSUID `recipient` for

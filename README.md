@@ -12,6 +12,8 @@
 Business-scoped user ID support, client webhook v2, rollout guidance, and the
 CRM/PBX handoff are documented in
 [docs/business-scoped-user-ids.md](docs/business-scoped-user-ids.md).
+The CRM implementation contract is maintained separately in
+[docs/zoni-crm-bsuid.md](docs/zoni-crm-bsuid.md).
 
 [Documentation](https://shridarpatil.github.io/frappe_whatsapp/)
 

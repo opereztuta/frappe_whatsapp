@@ -45,7 +45,8 @@ Frappe wraps every returned object in a top-level `message` property.
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `phone_number` | Yes | Destination in international format. It is normalized and must contain 8–15 digits. |
+| `phone_number` | One identity | Destination in international format. It is normalized and must contain 8–15 digits. |
+| `recipient` | One identity | Regular or parent BSUID. When both identity fields are supplied, `phone_number` takes precedence. |
 | `whatsapp_account` | Yes | Exact active **WhatsApp Account** name. CRM must pass its channel ID; no fallback account is inferred. |
 | `agent_extension` | Yes | CRM server-resolved PBX extension, 1–10 ASCII digits. |
 | `source_app` | Yes | Exact enabled **WhatsApp Client App** name for the CRM. |
