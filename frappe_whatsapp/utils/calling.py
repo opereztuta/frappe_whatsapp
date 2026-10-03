@@ -41,6 +41,10 @@ CALL_PERMISSION_STATE_TTL_SECONDS = 60
 CALL_ACTION_PERMISSION_REQUEST = "Permission Request"
 CALL_ACTION_OUTBOUND = "Outbound Call"
 _AGENT_EXTENSION_PATTERN = re.compile(r"^[0-9]{1,10}$", re.ASCII)
+_IDENTITY_DESTINATION_EXTENSION_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+    re.ASCII,
+)
 _IDEMPOTENCY_KEY_PATTERN = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,139}$",
     re.ASCII,
@@ -122,6 +126,25 @@ def validate_agent_extension(agent_extension: Any) -> str:
             title=_("Invalid PBX Extension"),
         )
     return extension
+
+
+def validate_identity_destination_extension(
+    identity_destination_extension: Any,
+    *,
+    required: bool = False,
+) -> str:
+    raw_extension = str(identity_destination_extension or "")
+    if not raw_extension and not required:
+        return ""
+    if not _IDENTITY_DESTINATION_EXTENSION_PATTERN.fullmatch(raw_extension):
+        frappe.throw(
+            _(
+                "BSUID Destination Extension must be 1 to 64 characters and "
+                "contain only ASCII letters, digits, underscores, or hyphens."
+            ),
+            title=_("Invalid Calling Settings"),
+        )
+    return raw_extension
 
 
 def validate_idempotency_key(idempotency_key: Any) -> str:
@@ -1460,7 +1483,7 @@ def _build_originate_payload(
 ) -> dict[str, str]:
     number = _normalize_phone_number(call_doc.phone_number)
     raw_recipient = getattr(call_doc, "recipient", None)
-    recipient = normalize_bsuid(raw_recipient) if raw_recipient else ""
+    recipient = normalize_bsuid(raw_recipient) if raw_recipient and not number else ""
     extension = validate_agent_extension(call_doc.agent_extension)
     values = {
         "number": number,
@@ -1473,12 +1496,10 @@ def _build_originate_payload(
         label=_("Agent Channel Template"),
     )
     if recipient:
-        exten = str(settings.get("identity_destination_extension") or "").strip()
-        if not exten or "\r" in exten or "\n" in exten:
-            frappe.throw(
-                _("Configure a valid BSUID Destination Extension."),
-                title=_("Invalid Calling Settings"),
-            )
+        exten = validate_identity_destination_extension(
+            settings.get("identity_destination_extension"),
+            required=True,
+        )
     else:
         exten = _safe_format(
             settings.destination_number_template or "{number}",
@@ -1489,16 +1510,18 @@ def _build_originate_payload(
 
     variables = [f"WHATSAPP_CALL_ID={call_doc.name}"]
     if recipient:
-        encoded_recipient = base64.urlsafe_b64encode(
-            recipient.encode("utf-8")
-        ).decode("ascii").rstrip("=")
-        recipient_kind = (
-            "parent_user_id" if ".ENT." in recipient else "user_id"
+        encoded_recipient = (
+            base64.urlsafe_b64encode(recipient.encode("utf-8"))
+            .decode("ascii")
+            .rstrip("=")
         )
-        variables.extend([
-            f"WHATSAPP_RECIPIENT_KIND={recipient_kind}",
-            f"WHATSAPP_RECIPIENT_B64={encoded_recipient}",
-        ])
+        recipient_kind = "parent_user_id" if ".ENT." in recipient else "user_id"
+        variables.extend(
+            [
+                f"WHATSAPP_RECIPIENT_KIND={recipient_kind}",
+                f"WHATSAPP_RECIPIENT_B64={encoded_recipient}",
+            ]
+        )
     return {
         "Action": "Originate",
         "ActionID": action_id,

@@ -204,6 +204,11 @@ Recommended sequence:
 - Configure WhatsApp SIP calling in FreePBX/Asterisk following Meta's SIP guide.
 - Create or verify an outbound route that can dial WhatsApp users from an
   internal extension.
+- Install the reviewed BSUID fragment from the companion
+  `asterisk-voice-agent-bridge` repository and follow
+  `docs/whatsapp-bsuid-calling.md` there. It defines
+  `whatsapp-bsuid@from-internal` and routes validated recipients through the
+  `Meta-WhatsApp` PJSIP endpoint.
 - Create a restricted AMI user with Originate permission.
 - Manually test the route from an agent extension before enabling calling.
 
@@ -214,7 +219,16 @@ Recommended sequence:
 - Enter AMI host, port, username, password, and TLS setting.
 - Configure **Agent Channel Template**, **Destination Context**, and
   **Destination Number Template**.
+- Keep **Destination Context** as `from-internal` and set **BSUID Destination
+  Extension** to `whatsapp-bsuid`. The setting accepts only 1-64 ASCII letters,
+  digits, underscores, or hyphens.
 - Keep **WhatsApp Call Agent** records for Desk/`whatsapp_chat` users only.
 
 `{number}` is the WhatsApp number without a leading `+`; `{e164}` includes the
 leading `+`; `{extension}` is the validated PBX extension.
+
+For a BSUID-only call, Frappe sends the local call name, recipient kind, and
+unpadded base64url recipient in the `WHATSAPP_CALL_ID`,
+`WHATSAPP_RECIPIENT_KIND`, and `WHATSAPP_RECIPIENT_B64` AMI variables. A
+successful `pbx_queued` response is not evidence that the WhatsApp handset
+rang; use the staged-call evidence procedure in the PBX runbook.

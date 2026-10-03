@@ -192,8 +192,20 @@ the configured **BSUID Destination Extension** and includes:
 - `WHATSAPP_RECIPIENT_B64=<unpadded base64url UTF-8 BSUID>`
 
 The dialplan/bridge must decode the value and originate the WhatsApp leg using
-Meta's `recipient`. Treat BSUID calling as unavailable until a staged call has
-rung end to end.
+Meta's `recipient`. The reviewed FreePBX fragment and maintenance-window
+procedure are maintained in the companion `asterisk-voice-agent-bridge`
+repository at `docs/whatsapp-bsuid-calling.md`.
+
+The deployed contract is `whatsapp-bsuid@from-internal`. It accepts only
+unpadded base64url metadata, validates the decoded value against the same
+regular/parent BSUID formats used by this application, and dials
+`PJSIP/<recipient>@Meta-WhatsApp`. Configure **Destination Context** as
+`from-internal` and **BSUID Destination Extension** as `whatsapp-bsuid`.
+The existing numeric destination template remains unchanged.
+
+`PBX Queued` proves only that AMI accepted the originate request. Treat BSUID
+calling as unavailable until PBX channel evidence and an observer confirm that
+an approved BSUID-only test user's WhatsApp handset rang end to end.
 
 ## Rollout and direct CRM cutover
 
