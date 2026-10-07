@@ -160,32 +160,37 @@ class WhatsAppMessage(Document):
 
     def validate(self):
         self.set_whatsapp_account()
-        if self.type == "Outgoing" and not (self.to or self.get("recipient")):
+        self._resolve_outgoing_contact_profile()
+
+    def _resolve_outgoing_contact_profile(self):
+        """Resolve the selected outbound identity before compliance checks."""
+        if self.type != "Outgoing":
+            return
+
+        if not (self.to or self.get("recipient")):
             frappe.throw(_("A phone number or BSUID recipient is required."))
-        if self.type == "Outgoing" and (self.to or self.get("recipient")):
-            selected_recipient = (
-                str(self.get("recipient") or "") if not self.to else ""
-            )
-            identity = {
-                "phone": self.to,
-                "user_id": (
-                    selected_recipient
-                    if selected_recipient
-                    and ".ENT." not in selected_recipient
-                    else None
-                ),
-                "parent_user_id": (
-                    selected_recipient
-                    if selected_recipient
-                    and ".ENT." in selected_recipient
-                    else None
-                ),
-                "profile_name": self.profile_name,
-            }
-            profile = resolve_identity(
-                whatsapp_account=str(self.whatsapp_account), identity=identity
-            )
-            self.contact_profile = profile.name
+
+        selected_recipient = (
+            str(self.get("recipient") or "") if not self.to else ""
+        )
+        identity = {
+            "phone": self.to,
+            "user_id": (
+                selected_recipient
+                if selected_recipient and ".ENT." not in selected_recipient
+                else None
+            ),
+            "parent_user_id": (
+                selected_recipient
+                if selected_recipient and ".ENT." in selected_recipient
+                else None
+            ),
+            "profile_name": self.profile_name,
+        }
+        profile = resolve_identity(
+            whatsapp_account=str(self.whatsapp_account), identity=identity
+        )
+        self.contact_profile = profile.name
 
     def on_update(self):
         self.update_profile_name()
@@ -462,6 +467,10 @@ class WhatsAppMessage(Document):
     def before_insert(self):
         """Send message."""
         self.set_whatsapp_account()
+        # Frappe runs before_insert before validate. Resolve the outbound
+        # identity here so service-window and consent checks can use the
+        # stable profile for phone-less BSUID recipients.
+        self._resolve_outgoing_contact_profile()
 
         if self.use_template and self.template:
             self.message_type = "Template"

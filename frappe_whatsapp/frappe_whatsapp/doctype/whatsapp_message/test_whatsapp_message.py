@@ -4,6 +4,7 @@
 
 import os
 import tempfile
+from typing import Protocol, cast
 from unittest.mock import patch
 
 import frappe
@@ -14,6 +15,11 @@ from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message i
     WhatsAppMessage,
     _get_integration_request_json,
 )
+from frappe_whatsapp.utils.identity import resolve_identity
+
+
+class _AccountFixture(Protocol):
+    name: str
 
 
 class TestWhatsAppMessage(FrappeTestCase):
@@ -45,6 +51,196 @@ class TestWhatsAppMessage(FrappeTestCase):
         }
         values.update(overrides)
         return WhatsAppMessage(values)
+
+    def _account(self) -> _AccountFixture:
+        suffix = frappe.generate_hash(length=8)
+        return cast(
+            _AccountFixture,
+            frappe.get_doc({
+                "doctype": "WhatsApp Account",
+                "account_name": f"Message Window Test {suffix}",
+                "status": "Active",
+                "token": "test-token",
+                "url": "https://graph.facebook.com",
+                "version": "v24.0",
+                "phone_id": f"message-window-{suffix}",
+            }).insert(ignore_permissions=True),
+        )
+
+    def _recent_incoming(
+        self, *, account, profile, user_id: str, phone: str | None = None
+    ):
+        return frappe.get_doc({
+            "doctype": "WhatsApp Message",
+            "type": "Incoming",
+            "from": phone,
+            "from_user_id": user_id,
+            "contact_profile": profile.name,
+            "message": "Recent inbound message",
+            "message_id": f"wamid.{frappe.generate_hash(length=16)}",
+            "content_type": "text",
+            "whatsapp_account": account.name,
+        }).insert(ignore_permissions=True)
+
+    def _manual_bsuid_message(self, *, account, recipient: str):
+        return WhatsAppMessage({
+            "doctype": "WhatsApp Message",
+            "type": "Outgoing",
+            "recipient": recipient,
+            "message": "Reply over BSUID",
+            "message_type": "Manual",
+            "content_type": "text",
+            "whatsapp_account": account.name,
+        })
+
+    def test_bsuid_uses_linked_profile_window_before_validate(self):
+        account = self._account()
+        user_id = f"US.{frappe.generate_hash(length=20)}"
+        phone = "15550101001"
+        profile = resolve_identity(
+            whatsapp_account=account.name,
+            identity={"phone": phone, "user_id": user_id},
+        )
+        self._recent_incoming(
+            account=account,
+            profile=profile,
+            user_id=user_id,
+            phone=phone,
+        )
+        message = self._manual_bsuid_message(
+            account=account, recipient=user_id
+        )
+
+        consent_result = frappe._dict(
+            allowed=True, status="Bypassed", reason="Service window bypass"
+        )
+        with patch(
+            "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
+            "whatsapp_message.verify_consent_for_send",
+            return_value=consent_result,
+        ) as mock_consent, patch.object(
+            message, "notify"
+        ) as mock_notify:
+            message.insert(ignore_permissions=True)
+
+        self.assertEqual(message.contact_profile, profile.name)
+        self.assertEqual(message.within_conversation_window, 1)
+        payload = mock_notify.call_args.args[0]
+        self.assertEqual(payload["recipient"], user_id)
+        self.assertNotIn("to", payload)
+        self.assertEqual(
+            mock_consent.call_args.kwargs["contact_profile"], profile.name
+        )
+        self.assertTrue(
+            mock_consent.call_args.kwargs["service_window_active"]
+        )
+
+    def test_phone_less_bsuid_profile_uses_profile_window(self):
+        account = self._account()
+        user_id = f"US.{frappe.generate_hash(length=20)}"
+        profile = resolve_identity(
+            whatsapp_account=account.name,
+            identity={"user_id": user_id},
+        )
+        self._recent_incoming(
+            account=account, profile=profile, user_id=user_id
+        )
+        message = self._manual_bsuid_message(
+            account=account, recipient=user_id
+        )
+
+        with patch.object(
+            message, "_check_consent"
+        ), patch.object(message, "notify") as mock_notify:
+            message.insert(ignore_permissions=True)
+
+        self.assertEqual(message.contact_profile, profile.name)
+        self.assertEqual(message.within_conversation_window, 1)
+        self.assertEqual(
+            mock_notify.call_args.args[0]["recipient"], user_id
+        )
+
+    def test_bsuid_without_recent_incoming_remains_outside_window(self):
+        account = self._account()
+        user_id = f"US.{frappe.generate_hash(length=20)}"
+        message = self._manual_bsuid_message(
+            account=account, recipient=user_id
+        )
+
+        settings = frappe._dict(
+            window_hours=24,
+            enforce_24_hour_window=1,
+        )
+        with patch.object(
+            message, "_check_consent"
+        ), patch.object(message, "notify") as mock_notify, patch(
+            "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
+            "whatsapp_message.get_compliance_settings",
+            return_value=settings,
+        ), patch(
+            "frappe_whatsapp.utils.consent.get_compliance_settings",
+            return_value=settings,
+        ):
+            with self.assertRaises(frappe.ValidationError) as raised:
+                message.before_insert()
+
+        self.assertTrue(message.contact_profile)
+        self.assertIn(
+            "No incoming message found from this contact",
+            str(raised.exception),
+        )
+        mock_notify.assert_not_called()
+
+    def test_resolved_identity_replaces_mismatched_contact_profile(self):
+        account = self._account()
+        selected_user_id = f"US.{frappe.generate_hash(length=20)}"
+        other_user_id = f"US.{frappe.generate_hash(length=20)}"
+        selected_profile = resolve_identity(
+            whatsapp_account=account.name,
+            identity={"user_id": selected_user_id},
+        )
+        other_profile = resolve_identity(
+            whatsapp_account=account.name,
+            identity={"user_id": other_user_id},
+        )
+        message = self._manual_bsuid_message(
+            account=account, recipient=selected_user_id
+        )
+        message.contact_profile = other_profile.name
+
+        message._resolve_outgoing_contact_profile()
+
+        self.assertEqual(message.contact_profile, selected_profile.name)
+
+    def test_template_send_sees_profile_resolved_before_insert(self):
+        account = self._account()
+        user_id = f"US.{frappe.generate_hash(length=20)}"
+        profile = resolve_identity(
+            whatsapp_account=account.name,
+            identity={"user_id": user_id},
+        )
+        message = self._template_message(
+            to=None,
+            recipient=user_id,
+            whatsapp_account=account.name,
+            use_template=1,
+        )
+        profile_seen_by_template = []
+
+        with patch(
+            "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
+            "whatsapp_message.get_service_window_status",
+            return_value=(False, "closed"),
+        ), patch.object(message, "_check_consent"), patch.object(
+            message,
+            "send_template",
+            side_effect=lambda: profile_seen_by_template.append(
+                message.contact_profile
+            ),
+        ):
+            message.before_insert()
+
+        self.assertEqual(profile_seen_by_template, [profile.name])
 
     @patch(
         "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
@@ -216,7 +412,9 @@ class TestWhatsAppMessage(FrappeTestCase):
     def test_before_insert_does_not_double_wrap_validation_error(self):
         message = self._template_message(use_template=1)
 
-        with patch.object(message, "set_whatsapp_account"), patch(
+        with patch.object(message, "set_whatsapp_account"), patch.object(
+            message, "_resolve_outgoing_contact_profile"
+        ), patch(
             "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
             "whatsapp_message.get_service_window_status",
             return_value=(False, "closed"),
@@ -243,6 +441,8 @@ class TestWhatsAppMessage(FrappeTestCase):
         })
 
         with patch.object(message, "set_whatsapp_account"), patch.object(
+            message, "_resolve_outgoing_contact_profile"
+        ), patch.object(
             message, "_check_consent"
         ), patch(
             "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
@@ -400,6 +600,9 @@ class TestWhatsAppMessage(FrappeTestCase):
             "set_whatsapp_account",
         ), patch.object(
             message_doc,
+            "_resolve_outgoing_contact_profile",
+        ), patch.object(
+            message_doc,
             "_check_consent",
         ), patch(
             "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
@@ -442,6 +645,9 @@ class TestWhatsAppMessage(FrappeTestCase):
             "set_whatsapp_account",
         ), patch.object(
             message_doc,
+            "_resolve_outgoing_contact_profile",
+        ), patch.object(
+            message_doc,
             "_check_consent",
         ), patch(
             "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
@@ -475,6 +681,9 @@ class TestWhatsAppMessage(FrappeTestCase):
         with patch.object(
             message_doc,
             "set_whatsapp_account",
+        ), patch.object(
+            message_doc,
+            "_resolve_outgoing_contact_profile",
         ), patch.object(
             message_doc,
             "_check_consent",
