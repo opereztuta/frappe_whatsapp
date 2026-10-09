@@ -93,7 +93,9 @@ class TestWhatsAppMessage(FrappeTestCase):
             "whatsapp_account": account.name,
         })
 
-    def _create_phone_message(self, account, *, response=None, **overrides):
+    def _create_phone_message(
+        self, account, *, response=None, **overrides
+    ) -> WhatsAppMessage:
         from frappe.api.v1 import create_doc
 
         values = {
@@ -118,7 +120,7 @@ class TestWhatsAppMessage(FrappeTestCase):
             module + "request_meta_json",
             return_value=response or {"messages": [{"id": "wamid.identity-test"}]},
         ) as mock_meta:
-            message = create_doc("WhatsApp Message")
+            message = cast(WhatsAppMessage, create_doc("WhatsApp Message"))
         payload = mock_meta.call_args.kwargs["json_body"]
         self.assertEqual(payload["to"], values["to"])
         self.assertNotIn("recipient", payload)

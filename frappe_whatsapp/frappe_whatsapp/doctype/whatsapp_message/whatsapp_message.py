@@ -168,10 +168,10 @@ class WhatsAppMessage(Document):
         """Snapshot known BSUIDs after sending, without changing the destination."""
         identity = profile_identity(profile)
         self.recipient_user_id = (
-            self.get("recipient_user_id") or identity.get("user_id")
+            self.recipient_user_id or identity.get("user_id")
         )
         self.recipient_parent_user_id = (
-            self.get("recipient_parent_user_id") or identity.get("parent_user_id")
+            self.recipient_parent_user_id or identity.get("parent_user_id")
         )
         if not self.get("recipient"):
             self.recipient = self.recipient_user_id or self.recipient_parent_user_id
