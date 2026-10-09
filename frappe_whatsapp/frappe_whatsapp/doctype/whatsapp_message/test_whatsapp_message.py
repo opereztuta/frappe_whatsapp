@@ -93,6 +93,149 @@ class TestWhatsAppMessage(FrappeTestCase):
             "whatsapp_account": account.name,
         })
 
+    def _create_phone_message(self, account, *, response=None, **overrides):
+        from frappe.api.v1 import create_doc
+
+        values = {
+            "to": "15550101999",
+            "message": "Phone reply with known identity",
+            "content_type": "text",
+            "use_template": 0,
+            "whatsapp_account": account.name,
+        }
+        values.update(overrides)
+        module = (
+            "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
+            "whatsapp_message."
+        )
+        with patch(
+            "frappe.api.v1.get_request_form_data", return_value=values
+        ), patch(
+            module + "get_service_window_status", return_value=(True, "")
+        ), patch(
+            module + "WhatsAppMessage._check_consent"
+        ), patch(
+            module + "request_meta_json",
+            return_value=response or {"messages": [{"id": "wamid.identity-test"}]},
+        ) as mock_meta:
+            message = create_doc("WhatsApp Message")
+        payload = mock_meta.call_args.kwargs["json_body"]
+        self.assertEqual(payload["to"], values["to"])
+        self.assertNotIn("recipient", payload)
+        return message
+
+    def test_direct_create_returns_and_persists_known_bsuids(self):
+        account = self._account()
+        user_id = f"US.{frappe.generate_hash(length=20)}"
+        parent_id = f"US.ENT.{frappe.generate_hash(length=20)}"
+        profile = resolve_identity(
+            whatsapp_account=account.name,
+            identity={
+                "phone": "15550101999", "user_id": user_id,
+                "parent_user_id": parent_id,
+            },
+        )
+        message = self._create_phone_message(account)
+        data = message.as_dict()
+        self.assertEqual(data["recipient"], user_id)
+        self.assertEqual(data["recipient_user_id"], user_id)
+        self.assertEqual(data["recipient_parent_user_id"], parent_id)
+        self.assertEqual(data["contact_profile"], profile.name)
+        message.reload()
+        self.assertEqual(message.recipient, user_id)
+        self.assertEqual(message.recipient_user_id, user_id)
+        self.assertEqual(message.recipient_parent_user_id, parent_id)
+
+        resolve_identity(
+            whatsapp_account=account.name,
+            identity={
+                "phone": "15550101999",
+                "user_id": f"US.{frappe.generate_hash(length=20)}",
+                "parent_user_id": f"US.ENT.{frappe.generate_hash(length=20)}",
+            },
+        )
+        message.status = "delivered"
+        message.save(ignore_permissions=True)
+        message.reload()
+        self.assertEqual(message.recipient, user_id)
+        self.assertEqual(message.recipient_user_id, user_id)
+        self.assertEqual(message.recipient_parent_user_id, parent_id)
+
+    def test_direct_create_uses_parent_bsuid_when_regular_unknown(self):
+        account = self._account()
+        parent_id = f"US.ENT.{frappe.generate_hash(length=20)}"
+        resolve_identity(
+            whatsapp_account=account.name,
+            identity={"phone": "15550101999", "parent_user_id": parent_id},
+        )
+        message = self._create_phone_message(account)
+        self.assertEqual(message.recipient, parent_id)
+        self.assertFalse(message.recipient_user_id)
+        self.assertEqual(message.recipient_parent_user_id, parent_id)
+
+    def test_direct_create_does_not_infer_bsuid_from_phone(self):
+        message = self._create_phone_message(self._account())
+        self.assertEqual(message.status, "Success")
+        self.assertFalse(message.recipient)
+        self.assertFalse(message.recipient_user_id)
+        self.assertFalse(message.recipient_parent_user_id)
+
+    def test_direct_create_uses_bsuid_learned_from_meta(self):
+        account = self._account()
+        old_id = f"US.{frappe.generate_hash(length=20)}"
+        new_id = f"US.{frappe.generate_hash(length=20)}"
+        resolve_identity(
+            whatsapp_account=account.name,
+            identity={"phone": "15550101999", "user_id": old_id},
+        )
+        message = self._create_phone_message(account, response={
+            "messages": [{"id": "wamid.new-identity"}],
+            "contacts": [{"wa_id": "15550101999", "user_id": new_id}],
+        })
+        self.assertEqual(message.as_dict()["recipient"], new_id)
+        self.assertEqual(message.recipient_user_id, new_id)
+        message.reload()
+        self.assertEqual(message.recipient, new_id)
+
+    def test_direct_create_preserves_explicit_recipient_with_phone(self):
+        account = self._account()
+        known_id = f"US.{frappe.generate_hash(length=20)}"
+        explicit_id = f"US.{frappe.generate_hash(length=20)}"
+        resolve_identity(
+            whatsapp_account=account.name,
+            identity={"phone": "15550101999", "user_id": known_id},
+        )
+        message = self._create_phone_message(account, recipient=explicit_id)
+        self.assertEqual(message.recipient, explicit_id)
+        self.assertEqual(message.recipient_user_id, known_id)
+
+    def test_direct_create_respects_identity_scope(self):
+        account = self._account()
+        other_account = self._account()
+        user_id = f"US.{frappe.generate_hash(length=20)}"
+        resolve_identity(
+            whatsapp_account=other_account.name,
+            identity={"phone": "15550101999", "user_id": user_id},
+        )
+        isolated = self._create_phone_message(account)
+        self.assertFalse(isolated.recipient_user_id)
+        self.assertFalse(isolated.recipient)
+
+        portfolio_id = frappe.generate_hash(length=20)
+        frappe.db.set_value(
+            "WhatsApp Account", account.name, "business_portfolio_id", portfolio_id
+        )
+        frappe.db.set_value(
+            "WhatsApp Account", other_account.name, "business_portfolio_id", portfolio_id
+        )
+        resolve_identity(
+            whatsapp_account=other_account.name,
+            identity={"phone": "15550101998", "user_id": user_id},
+        )
+        shared = self._create_phone_message(account, to="15550101998")
+        self.assertEqual(shared.recipient_user_id, user_id)
+        self.assertEqual(shared.recipient, user_id)
+
     def test_bsuid_uses_linked_profile_window_before_validate(self):
         account = self._account()
         user_id = f"US.{frappe.generate_hash(length=20)}"
@@ -124,6 +267,7 @@ class TestWhatsAppMessage(FrappeTestCase):
             message.insert(ignore_permissions=True)
 
         self.assertEqual(message.contact_profile, profile.name)
+        self.assertEqual(message.recipient_user_id, user_id)
         self.assertEqual(message.within_conversation_window, 1)
         payload = mock_notify.call_args.args[0]
         self.assertEqual(payload["recipient"], user_id)

@@ -135,7 +135,7 @@
   },
   {
    "depends_on": "eval:(doc.type==\"Outgoing\");",
-   "description": "Regular or parent business-scoped user ID used when no phone number is available.",
+   "description": "Regular or parent business-scoped user ID. New outgoing messages include the known BSUID even when sent by phone; the phone takes precedence when both are present.",
    "fieldname": "recipient",
    "fieldtype": "Data",
    "label": "BSUID Recipient",

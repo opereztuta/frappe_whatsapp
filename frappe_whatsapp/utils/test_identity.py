@@ -530,6 +530,11 @@ class TestBusinessScopedIdentity(FrappeTestCase):
 
     def test_status_persists_raw_contact_and_recipient_identifiers(self):
         account = self._account()
+        initial_user_id = f"US.{frappe.generate_hash(length=20)}"
+        resolve_identity(
+            whatsapp_account=account.name,
+            identity={"phone": "16505551234", "user_id": initial_user_id},
+        )
         message_id = f"wamid.{frappe.generate_hash(length=12)}"
         with patch(
             "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
@@ -578,6 +583,7 @@ class TestBusinessScopedIdentity(FrappeTestCase):
         self.assertEqual(message.status_recipient_phone, "16505551234")
         self.assertEqual(message.recipient_user_id, user_id)
         self.assertEqual(message.recipient_parent_user_id, parent_user_id)
+        self.assertEqual(message.recipient, initial_user_id)
         self.assertEqual(
             json.loads(str(message.status_contacts)), {"contacts": contacts}
         )

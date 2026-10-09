@@ -351,6 +351,26 @@ available until reconciliation and replay succeed.
 
 ## Outbound messages
 
+### Existing direct-create integration
+
+`POST /api/resource/WhatsApp Message` also returns known recipient identities
+in its `data` document. For new outgoing messages sent using `to`, Frappe
+fills `recipient_user_id` and `recipient_parent_user_id` from the resolved
+contact profile when Meta's immediate send response does not supply them.
+When `recipient` was omitted, it contains the regular BSUID, falling back to
+the parent BSUID. An explicitly supplied `recipient` is preserved. The field
+is spelled `recipient`, not `receipient`.
+
+The phone still takes precedence for sending when `to` and `recipient` are
+both present. These response fields are persisted on the message before the
+creation response is returned. Later saves do not refresh this snapshot from
+the profile; status webhooks can still update the recipient identity fields
+with Meta-reported values. If neither the scoped profile nor Meta knows a
+BSUID, the identity fields remain empty. There is no backfill of older
+messages and no BSUID inferred from a phone alone.
+
+### Recommended idempotent send API
+
 Replace the legacy `POST /api/resource/WhatsApp Message` integration with:
 
 ```http

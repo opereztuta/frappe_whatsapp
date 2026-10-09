@@ -160,7 +160,21 @@ class WhatsAppMessage(Document):
 
     def validate(self):
         self.set_whatsapp_account()
-        self._resolve_outgoing_contact_profile()
+        profile = self._resolve_outgoing_contact_profile()
+        if self.is_new() and profile:
+            self._populate_recipient_identity(profile)
+
+    def _populate_recipient_identity(self, profile):
+        """Snapshot known BSUIDs after sending, without changing the destination."""
+        identity = profile_identity(profile)
+        self.recipient_user_id = (
+            self.get("recipient_user_id") or identity.get("user_id")
+        )
+        self.recipient_parent_user_id = (
+            self.get("recipient_parent_user_id") or identity.get("parent_user_id")
+        )
+        if not self.get("recipient"):
+            self.recipient = self.recipient_user_id or self.recipient_parent_user_id
 
     def _resolve_outgoing_contact_profile(self):
         """Resolve the selected outbound identity before compliance checks."""
@@ -191,6 +205,7 @@ class WhatsAppMessage(Document):
             whatsapp_account=str(self.whatsapp_account), identity=identity
         )
         self.contact_profile = profile.name
+        return profile
 
     def on_update(self):
         self.update_profile_name()
