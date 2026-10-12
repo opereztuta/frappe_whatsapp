@@ -1397,8 +1397,8 @@ def update_message_status(data, whatsapp_account=None):
                 identity.get("parent_user_id")
                 or resolved.get("parent_user_id")
             )
-            if not doc.to and resolved.get("phone"):
-                doc.to = resolved["phone"]
+            # Preserve the original send destination. A BSUID-only send has
+            # no `to`; webhook phone metadata belongs in status_recipient_phone.
         if doc.meta.has_field("status_recipient_phone"):
             doc.status_recipient_phone = (
                 str(raw_phone) if str(raw_phone or "").isdigit() else None

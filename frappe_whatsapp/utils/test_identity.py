@@ -528,6 +528,72 @@ class TestBusinessScopedIdentity(FrappeTestCase):
             profile.name,
         )
 
+    def test_bsuid_status_preserves_original_destination(self):
+        for parent_recipient in (False, True):
+            for phone_in_status in (False, True):
+                with self.subTest(
+                    parent_recipient=parent_recipient,
+                    phone_in_status=phone_in_status,
+                ):
+                    account = self._account()
+                    user_id = f"US.{frappe.generate_hash(length=20)}"
+                    parent_id = f"US.ENT.{frappe.generate_hash(length=20)}"
+                    phone = "16505551234"
+                    profile = resolve_identity(
+                        whatsapp_account=account.name,
+                        identity={
+                            "phone": phone,
+                            "user_id": user_id,
+                            "parent_user_id": parent_id,
+                        },
+                    )
+                    recipient = parent_id if parent_recipient else user_id
+                    message_id = f"wamid.{frappe.generate_hash(length=12)}"
+                    with patch(
+                        "frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message."
+                        "whatsapp_message.WhatsAppMessage.notify"
+                    ):
+                        message = frappe.get_doc({
+                            "doctype": "WhatsApp Message",
+                            "type": "Outgoing",
+                            "recipient": recipient,
+                            "message": "BSUID-only reply",
+                            "message_id": message_id,
+                            "content_type": "text",
+                            "whatsapp_account": account.name,
+                        }).insert(ignore_permissions=True)
+
+                    for status in ("sent", "delivered", "read"):
+                        status_payload = {
+                            "id": message_id,
+                            "status": status,
+                            "recipient_user_id": user_id,
+                            "recipient_parent_user_id": parent_id,
+                        }
+                        if phone_in_status:
+                            status_payload["recipient_id"] = phone
+                        process_webhook_payload({
+                            "entry": [{"changes": [{
+                                "field": "messages",
+                                "value": {
+                                    "metadata": {"phone_number_id": account.phone_id},
+                                    "statuses": [status_payload],
+                                },
+                            }]}],
+                        })
+
+                        message.reload()
+                        self.assertEqual(message.status, status)
+                        self.assertFalse(message.to)
+                        self.assertEqual(message.recipient, recipient)
+                        self.assertEqual(message.contact_profile, profile.name)
+                        self.assertEqual(message.recipient_user_id, user_id)
+                        self.assertEqual(message.recipient_parent_user_id, parent_id)
+                        self.assertEqual(
+                            message.status_recipient_phone,
+                            phone if phone_in_status else None,
+                        )
+
     def test_status_persists_raw_contact_and_recipient_identifiers(self):
         account = self._account()
         initial_user_id = f"US.{frappe.generate_hash(length=20)}"
@@ -580,6 +646,7 @@ class TestBusinessScopedIdentity(FrappeTestCase):
 
         message.reload()
         self.assertEqual(message.status, "delivered")
+        self.assertEqual(message.to, "16505551234")
         self.assertEqual(message.status_recipient_phone, "16505551234")
         self.assertEqual(message.recipient_user_id, user_id)
         self.assertEqual(message.recipient_parent_user_id, parent_user_id)
