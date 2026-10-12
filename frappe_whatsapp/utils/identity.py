@@ -504,6 +504,7 @@ def profile_identity(profile: Any) -> dict[str, Any]:
     preferred = phone or user_id or parent_user_id
     return {
         "profile_id": str(profile.name),
+        "profile_name": str(profile.get("profile_name") or "") or None,
         "phone": phone,
         "user_id": user_id,
         "parent_user_id": parent_user_id,

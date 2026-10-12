@@ -18,6 +18,56 @@ events directly from `frappe_whatsapp`. Meta must remain subscribed only to
 This is a CRM-owned implementation. No `zoni_crm_service` source is changed by
 the Frappe BSUID work.
 
+## October 12, 2026 sandbox adapter update
+
+Reviewed source revisions: `frappe_whatsapp` `4da4304`, `zoni_edu`
+`f19a69f4`, `whatsapp_chat` `50cf336`, bridge `aebe9aa`, and CRM `bd38fb3`.
+The Frappe/Zoni changes described here are uncommitted local changes on those
+bases. Earlier sections describing aliases and the CRM event ledger remain
+CRM-team requirements, not capabilities supplied by the new update endpoint.
+
+The active sandbox account is `12013920633`, portfolio `308031774557009`.
+Its mapped CRM channel is `d110c46c-1ea2-4a38-a070-d05337c80000`; the channel
+UID in the CRM team's example must not replace that account mapping.
+
+Deploy with the normal Frappe `bench --site <site> migrate` procedure so the
+Zoni **WhatsApp Inbound Event** DocType gains `crm_intake_completed` and
+`crm_intake_result`. Restart application processes through the normal local
+service procedure after deploying Python changes. The sandbox DocType was
+synchronized directly during validation; Meta subscriptions were unchanged.
+
+Incoming delivery now performs CRM intake, durably checkpoints the returned
+CRM result, then synchronizes the channel user's profile. A failed second
+operation returns 502 and leaves the event unprocessed. Retry skips accepted
+intake and resumes synchronization. A completed duplicate makes no CRM request.
+Legacy events without an event ID cannot use this durable checkpoint. A lost
+intake response before checkpointing still requires CRM-side idempotency.
+
+Phone-hidden omissions preserve stored data: unavailable optional fields are
+omitted from the update request. Parent IDs retain their exact `.ENT.` format.
+Profile display names are included in the Frappe identity snapshot. Identity
+transitions are never inferred from usernames or human-readable system text.
+
+### Validation evidence and remaining acceptance
+
+- Real regular-BSUID-only message `b6flmpguj7` was delivered and read; its
+  original phone destination stayed empty after status replay.
+- Phone-hidden regular-plus-parent dashboard payload passed isolated Frappe
+  processing with external forwarding mocked and test records rolled back.
+- Identity-update adapter and two-stage webhook tests cover account isolation,
+  metadata omission, previous/current lookup keys, rejected responses, durable
+  synchronization retry, completed duplicates, and lost rotation responses.
+- Both GET and authenticated POST with an empty, non-mutating payload returned
+  HTTP 404 for `https://testcrm.zoni.edu/apis/contactUs/channelUser/update`.
+  End-to-end CRM acceptance is blocked until the CRM team deploys/exposes the
+  endpoint. No synthetic contacts were submitted to testcrm during this probe.
+- After deployment, validate an approved phone-free contact on the sandbox
+  channel: accepted intake, parent/name/handle synchronization, same channel-user
+  record, retry after forced synchronization failure, and a regular-BSUID reply.
+  Never use Meta dashboard sample IDs as live message destinations.
+- Calling remains deferred: the reviewed CRM call service still requires a
+  phone and creates fresh retry keys for call mutations.
+
 ## Reviewed compatibility baseline
 
 This contract was reviewed against these revisions:
@@ -242,12 +292,12 @@ The success body must retain the identifiers already consumed by Zoni:
 }
 ```
 
-### Identity rotation
+### Identity and profile updates
 
-Implement this currently missing endpoint:
+The implemented CRM endpoint is:
 
 ```http
-POST /apis/leads/providerUser/identityUpdate
+POST /apis/contactUs/channelUser/update
 Authorization: Bearer <API_SECRET_FOR_APPS>
 Content-Type: application/json
 ```
@@ -257,27 +307,36 @@ Zoni sends:
 ```json
 {
   "crmProviderChannelUid": "11111111-2222-3333-4444-555555555555",
-  "providerEventId": "86d6fd68fbb80a50f5aa95f980d45daf",
-  "previousUserId": "US.Old1234",
-  "currentUserId": "US.New1234",
-  "previousParentUserId": "US.ENT.OldParent",
-  "currentParentUserId": "US.ENT.NewParent",
-  "username": "new_handle",
-  "identity": {
-    "profile_id": "whatsapp-profile-name",
-    "phone": null,
-    "user_id": "US.New1234",
-    "parent_user_id": "US.ENT.NewParent",
-    "username": "new_handle",
-    "preferred_recipient": "US.New1234"
+  "providerUserId": "US.Old1234",
+  "update": {
+    "providerUserId": "US.New1234",
+    "parentProviderUserId": "US.ENT.NewParent",
+    "providerUserHandle": "new_handle",
+    "providerUserName": "Maria G",
+    "phone": "13055551234"
   }
 }
 ```
 
-Resolve the lead through any previous or current alias in the same provider
-channel. Insert the new aliases, mark superseded IDs inactive, retain all old
-aliases, update the lead's compatibility `PROVIDER_USER_ID` and handle, and
-record the event atomically. A missing previous value is valid.
+Top-level `providerUserId` is the lookup key: previous regular BSUID, then
+previous parent BSUID, then current regular/parent identity. For post-intake
+synchronization, it is exactly the identity supplied to intake (including a
+phone for legacy phone-only intake). `update.providerUserId` selects the current
+regular BSUID, otherwise parent BSUID, otherwise the known phone for legacy
+phone-only events. Only known, explicitly linked phones are forwarded using
+Zoni's existing E.164 normalization. Unavailable optional fields are omitted.
+
+The endpoint updates an existing channel user, returns the CRM response wrapper,
+and does not accept an event ID or implement historical aliases. Zoni requires
+`success: true`, including when the HTTP response is 200. Frappe/Zoni retain
+their existing event IDs and retry ledger locally.
+
+A successful rotation overwrites the lookup ID. If its response is lost, a
+retry using the previous ID can fail. Zoni retains that event and its error for
+manual reconciliation; it does not guess a replacement key, create a new user,
+or report uncertain success. CRM-owned follow-up is event-idempotent updates,
+historical aliases, conflict quarantine, and safe handling of reordered
+rotations. This endpoint alone does not complete those requirements.
 
 ### Message status
 

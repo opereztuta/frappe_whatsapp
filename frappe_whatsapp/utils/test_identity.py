@@ -23,6 +23,7 @@ from frappe_whatsapp.utils.identity import (
     get_identity_scope,
     resolve_identity,
     set_meta_recipient,
+    profile_identity,
 )
 from frappe_whatsapp.utils.consent import (
     get_or_create_account_state,
@@ -54,6 +55,34 @@ class TestBusinessScopedIdentity(FrappeTestCase):
                 "business_portfolio_id": portfolio_id,
             }).insert(ignore_permissions=True),
         )
+
+    def test_identity_snapshot_includes_profile_display_name(self):
+        account = self._account()
+        profile = resolve_identity(
+            whatsapp_account=account.name,
+            identity={"user_id": "US.DisplayNameTest", "profile_name": "Maria G"},
+        )
+        self.assertEqual(profile_identity(profile)["profile_name"], "Maria G")
+
+    @patch("frappe_whatsapp.utils.routing.forward_identity_update_to_app_async")
+    def test_system_message_body_does_not_link_previous_identity(self, forward):
+        account = self._account()
+        old = resolve_identity(
+            whatsapp_account=account.name, identity={"user_id": "US.OldBodyOnly"},
+        )
+        process_webhook_payload({"entry": [{"changes": [{
+            "field": "messages", "value": {
+                "metadata": {"phone_number_id": account.phone_id},
+                "messages": [{"type": "system", "id": "wamid.body-only", "system": {
+                    "type": "user_changed_user_id", "user_id": "US.NewBodyOnly",
+                    "body": "User changed from US.OldBodyOnly to US.NewBodyOnly",
+                }}],
+            },
+        }]}]})
+        old.reload()
+        self.assertEqual(old.user_id, "US.OldBodyOnly")
+        self.assertIsNone(forward.call_args.kwargs["previous_user_id"])
+        self.assertNotEqual(forward.call_args.kwargs["profile_name"], old.name)
 
     def test_meta_recipient_prefers_phone_and_supports_parent_id(self):
         payload = {"recipient": "US.13491208655302741918"}
@@ -325,14 +354,12 @@ class TestBusinessScopedIdentity(FrappeTestCase):
                         "metadata": {"phone_number_id": account.phone_id},
                         "messages": [{
                             "from": new_phone,
+                            "from_user_id": old_user_id,
                             "id": f"wamid.{frappe.generate_hash(length=8)}",
                             "type": "system",
                             "system": {
                                 "type": "user_changed_user_id",
-                                "body": (
-                                    f"User changed from {old_user_id} "
-                                    f"to {new_user_id}"
-                                ),
+                                "body": "Identity changed (display text only).",
                                 "wa_id": new_phone,
                                 "user_id": new_user_id,
                                 "parent_user_id": new_parent_id,

@@ -3,7 +3,6 @@ import frappe
 import hashlib
 import hmac
 import json
-import re
 import requests
 from frappe.utils import cint
 from frappe.utils.password import get_decrypted_password as \
@@ -51,9 +50,6 @@ DEFAULT_MEDIA_EXTENSION_BY_TYPE = {
 }
 
 _UNSUPPORTED_INCOMING_MESSAGE_TYPES = frozenset({"unsupported", "unknown"})
-_BSUID_IN_TEXT = re.compile(
-    r"\b[A-Z]{2}\.(?:ENT\.)?[A-Za-z0-9]{1,128}\b"
-)
 
 
 def _normalize_unsupported_log_value(
@@ -663,16 +659,6 @@ def _process_incoming_message(
         system = message.get("system") or {}
         if str(system.get("type") or "") == "user_changed_user_id":
             previous_user_id = message.get("from_user_id")
-            if not previous_user_id:
-                current_user_id = str(system.get("user_id") or "")
-                previous_user_id = next((
-                    candidate
-                    for candidate in _BSUID_IN_TEXT.findall(
-                        str(system.get("body") or "")
-                    )
-                    if ".ENT." not in candidate
-                    and candidate != current_user_id
-                ), None)
             _process_user_id_update(
                 {
                     **system,
