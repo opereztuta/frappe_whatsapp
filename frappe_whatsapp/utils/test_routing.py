@@ -36,6 +36,11 @@ def _get_message_doc(name: Any) -> WhatsAppMessage:
 
 
 class TestRouting(FrappeTestCase):
+    def test_recovery_can_be_scoped_to_one_app(self):
+        with patch("frappe_whatsapp.utils.routing.frappe.db.has_column", return_value=True), patch("frappe_whatsapp.utils.routing.frappe.get_all", return_value=[]) as rows:
+            recover_unqueued_incoming_events(client_app="crm-only")
+        self.assertEqual(rows.call_args.kwargs["filters"]["routed_app"], "crm-only")
+
     @patch(
         "frappe_whatsapp.utils.routing.forward_incoming_to_app_by_name"
     )

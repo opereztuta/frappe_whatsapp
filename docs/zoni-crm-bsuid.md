@@ -18,6 +18,123 @@ events directly from `frappe_whatsapp`. Meta must remain subscribed only to
 This is a CRM-owned implementation. No `zoni_crm_service` source is changed by
 the Frappe BSUID work.
 
+## October 13, 2026 critical integration hardening
+
+These changes are local and uncommitted on top of Frappe `14ad5bb` and Zoni
+`d6ca6cb4`. CRM `whatsappBsuid` remains unchanged. WhatsApp Chat, the bridge,
+PBX configuration, and Meta settings are unchanged by this work.
+
+### Implemented behavior
+
+- All Zoni incoming, identity-update, and status endpoints require the existing
+  HMAC-SHA256 signature over timestamp plus exact body bytes. Missing receiver
+  secret returns 503; missing/invalid/expired signatures return 403. A matching
+  header/body event ID is mandatory (400 otherwise). Malformed and non-ASCII
+  timestamp/signature values are rejected before persistence or CRM requests.
+- Frappe never sends an unsigned client webhook, even when the historical
+  `require_webhook_signature` flag is off. A missing sender secret is recorded
+  as a failed delivery with bounded retries instead of making an HTTP request.
+- Zoni serializes each event using a site/event-scoped MariaDB `GET_LOCK` on
+  the request connection. A competing request returns retryable 503. The lock
+  survives intake checkpoint commits; completion is committed before release.
+  Connection loss aborts processing. Deployment requires MariaDB, with no
+  expiring Redis lease or PostgreSQL fallback.
+- Existing event IDs must match both stored body SHA-256 and event type before
+  deduplication or retry. Changed bodies return terminal 409 and log event ID
+  and hashes; original checkpoints/results remain unchanged. The unique-insert
+  race uses a current database read and applies the same check. Historical
+  hashes are not rewritten.
+- Completed duplicates make no CRM request. Profile-sync retries skip accepted
+  intake. Ambiguous intake failures automatically retry the same event, as
+  selected for this release; rotations retain the previous lookup key.
+
+### Sandbox configuration and acceptance
+
+Signing is configured for client app
+`zoni_crm_epTzT5AjLF6LdIBht7b1RydPAsH3LiIk`: its password-field secret matches
+Zoni's `whatsapp_inbound_webhook_secret`, and both signature flags are enabled.
+Secrets are not recorded here. The previous signing configuration is in the
+owner-only local file `/tmp/bsuid-signing-before-20261013.json`.
+
+Verified by October 13, 2026 at 20:37 UTC against `https://testcrm.zoni.edu/`:
+
+| Case | Event ID | Account | CRM lead ID | Result |
+| --- | --- | --- | --- | --- |
+| Synthetic regular BSUID with parent metadata | `bsuid-synthetic-3afc8e59dedd4fc895d3db0d2a5894d9` | `12013920633` | 5285 | Intake and profile synchronization accepted; duplicate acknowledged |
+| Synthetic parent-only BSUID | `bsuid-synthetic-bc8db41d1d714f61b02bc619031b228d` | `18299477544` | 5286 | Intake and profile synchronization accepted; duplicate acknowledged |
+
+Both requests used the public sandbox endpoint, omitted phone destinations,
+and have `crm_intake_completed=1`, `processed=1`, and empty `last_error`.
+Subsequent identity updates omitting username, display name, and phone were
+accepted for both existing records. Local contract tests verify omitted
+fields are not sent to clear metadata; independent CRM database readback of
+those metadata values was not performed. No Meta message or call was sent to
+these synthetic identifiers.
+
+Public endpoint checks returned 403 for an unsigned request and 409 for a
+signed changed-body replay. Owner-only acceptance receipts are stored in
+`/tmp/bsuid-critical-acceptance-20261013.json`.
+
+All seven historical phone-hidden outbox failures were retried after correcting
+signing and verifying the current adapter/mappings. All now have HTTP 200,
+`Delivered`, two attempts, and completed intake/profile synchronization. Original
+event IDs and payload bytes were preserved; no completed checkpoint was reset.
+The deliveries are `k3jjiq8kb0`, `p3les7o71u`, `d9loe3ll8v`, `d00s35jotm`,
+`h3s7176dq7`, `3nkk5fkbo1`, and `91er0vlork`. Evidence including hashes is in
+`/tmp/bsuid-critical-recovery-20261013.json`. These are historical Meta-event
+replays; a newly participant-originated live phone-hidden test was not performed.
+
+### Scoped retries, deployment, and rollback
+
+The sandbox global scheduler is disabled (`System Settings.enable_scheduler=0`),
+which explains due retries not running automatically. It remains disabled.
+A user cron entry marked `bsuid-whatsapp-crm-retry` runs every minute with
+`flock`, targeting only the CRM client app. It calls:
+
+```bash
+cd /home/oscar/frappe-bench
+env/bin/bench --site zoni.local execute frappe_whatsapp.utils.client_delivery.retry_failed_client_events --kwargs '{"client_app":"zoni_crm_epTzT5AjLF6LdIBht7b1RydPAsH3LiIk"}'
+```
+
+The optional `client_app` argument scopes both unqueued-message recovery and
+outbox selection; omitting it preserves the existing general scheduler hook.
+Empty scope arguments fail instead of becoming unscoped. Transport errors,
+429, and 5xx remain retryable within the existing eight-attempt limit; other
+4xx responses require operator correction. Existing backup cron entries were
+preserved; the previous crontab is `/tmp/bsuid-crontab-before-20261013.txt`.
+Output goes to `logs/whatsapp_crm_retry.log`.
+
+Cron/worker acceptance used delivery `o0k47c37j5`, queued as due without an
+initial enqueue. Cron delivered it in one attempt and received HTTP 200 with
+`deduplicated=true` for the completed synthetic regular event.
+
+For deployment, configure matching secrets for every affected active sender
+and receiver before enforcing the new code, then restart web/worker processes
+through the normal release process. No DocType migration is required. Use the
+existing global hook where the production scheduler is enabled; the scoped
+cron is a sandbox-specific alternative, not an instruction to edit production.
+
+For rollback, stop affected forwarding and remove only the cron line marked
+`bsuid-whatsapp-crm-retry`, preserving unrelated entries. Do not restore an
+unsigned receiver or clear event records, payload hashes, or intake checkpoints.
+If old code must be restored, keep the receiver secret and both flags enabled;
+keep forwarding paused until authenticated processing is verified again.
+Investigate 409 collisions rather than altering historical payloads or hashes.
+
+Validation: 105 identity, message, routing, delivery, Zoni webhook/adapter, and
+event-integrity tests passed with external requests mocked on an isolated
+MariaDB test site. Tests cover real two-connection lock contention, persistence
+across checkpoint commits, disconnected lock release, collisions before/after
+completion, unique-insert races, and unchanged automatic retry requests.
+The disposable Zoni installation lacks optional HRMS setup; no global
+before-test hooks or tests were run against the working sandbox database.
+
+The local concurrency and authentication blockers are addressed. Exactly-once
+CRM effects after lost responses remain unproven: historical-alias lookup and
+durable event idempotency remain CRM-owned dependencies. This work does not
+resolve the CRM calling/messaging blockers listed in the audit or authorize
+production deployment.
+
 ## October 12, 2026 sandbox adapter update
 
 Reviewed source revisions: `frappe_whatsapp` `4da4304`, `zoni_edu`

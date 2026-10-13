@@ -141,3 +141,28 @@ class TestClientWebhookDelivery(FrappeTestCase):
         self.assertEqual(delivery.delivery_status, "Failed")
         self.assertEqual(delivery.attempts, 1)
         self.assertTrue(delivery.next_retry_at)
+
+    def test_missing_secret_fails_without_unsigned_http_request(self):
+        app = self._app()
+        app.set("webhook_secret", "")
+        app.set("require_webhook_signature", 0)
+        app.save(ignore_permissions=True)
+        name = self._queue(app)
+        with patch("frappe_whatsapp.utils.client_delivery.requests.post") as post:
+            deliver_client_event(name)
+        post.assert_not_called()
+        delivery = frappe.get_doc("WhatsApp Client Webhook Delivery", name)
+        self.assertEqual(delivery.get("delivery_status"), "Failed")
+        self.assertTrue(delivery.get("next_retry_at"))
+        error = delivery.get("error")
+        assert isinstance(error, str)
+        self.assertIn("webhook secret", error)
+
+    def test_scoped_retry_does_not_enqueue_other_apps(self):
+        from frappe_whatsapp.utils.client_delivery import retry_failed_client_events
+        with patch("frappe_whatsapp.utils.routing.recover_unqueued_incoming_events") as recover, patch("frappe_whatsapp.utils.client_delivery.frappe.get_all", return_value=[]) as rows:
+            retry_failed_client_events(client_app="crm-only")
+        recover.assert_called_once_with(client_app="crm-only")
+        self.assertEqual(rows.call_args.kwargs["filters"]["client_app"], "crm-only")
+        with self.assertRaises(ValueError):
+            retry_failed_client_events(client_app=" ")

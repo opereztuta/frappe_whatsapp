@@ -434,17 +434,22 @@ def _mark_client_event_queued(incoming_message_doc: Any) -> None:
         )
 
 
-def recover_unqueued_incoming_events() -> None:
+def recover_unqueued_incoming_events(*, client_app: str | None = None) -> None:
     """Recover an inbound event when its initial Redis job was lost."""
     if not frappe.db.has_column("WhatsApp Message", "client_event_queued"):
         return
+    filters = {
+        "type": "Incoming",
+        "client_event_queued": 0,
+        "routed_app": ["is", "set"],
+    }
+    if client_app is not None:
+        if not client_app.strip():
+            raise ValueError("A scoped recovery requires a nonempty client app.")
+        filters["routed_app"] = client_app
     rows = frappe.get_all(
         "WhatsApp Message",
-        filters={
-            "type": "Incoming",
-            "client_event_queued": 0,
-            "routed_app": ["is", "set"],
-        },
+        filters=filters,
         fields=["name", "content_type", "attach"],
         order_by="creation asc",
         limit=100,

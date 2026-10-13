@@ -106,7 +106,7 @@ def _headers(app: Any, event_id: str, body: bytes) -> dict[str, str]:
             hashlib.sha256,
         ).hexdigest()
         headers["X-WhatsApp-Signature"] = f"sha256={signature}"
-    elif app.get("require_webhook_signature"):
+    else:
         frappe.throw("WhatsApp Client App requires a webhook secret.")
     return headers
 
@@ -147,7 +147,7 @@ def deliver_client_event(delivery_name: str) -> None:
             "response_body": (response.text or "")[:500],
             "error": "" if success else f"HTTP {response.status_code}",
         })
-    except requests.RequestException as exc:
+    except (requests.RequestException, frappe.ValidationError) as exc:
         terminal = attempts >= MAX_ATTEMPTS
         delivery.db_set({
             "delivery_status": "Failed",
@@ -163,18 +163,25 @@ def _next_retry(attempt: int):
     return now_datetime() + timedelta(minutes=minutes)
 
 
-def retry_failed_client_events() -> None:
+def retry_failed_client_events(*, client_app: str | None = None) -> None:
     from frappe_whatsapp.utils.routing import recover_unqueued_incoming_events
 
-    recover_unqueued_incoming_events()
-    now = now_datetime()
+    if client_app is None:
+        recover_unqueued_incoming_events()
+    else:
+        if not client_app.strip():
+            raise ValueError("A scoped retry requires a nonempty client app.")
+        recover_unqueued_incoming_events(client_app=client_app)
+    filters: dict[str, Any] = {
+        "delivery_status": ["in", ["Pending", "Failed"]],
+        "attempts": ["<", MAX_ATTEMPTS],
+        "next_retry_at": ["<=", now_datetime()],
+    }
+    if client_app is not None:
+        filters["client_app"] = client_app
     rows = frappe.get_all(
         DELIVERY_DOCTYPE,
-        filters={
-            "delivery_status": ["in", ["Pending", "Failed"]],
-            "attempts": ["<", MAX_ATTEMPTS],
-            "next_retry_at": ["<=", now],
-        },
+        filters=filters,
         fields=["name"],
     )
     for row in rows:
