@@ -57,16 +57,78 @@ transitions are never inferred from usernames or human-readable system text.
 - Identity-update adapter and two-stage webhook tests cover account isolation,
   metadata omission, previous/current lookup keys, rejected responses, durable
   synchronization retry, completed duplicates, and lost rotation responses.
-- Both GET and authenticated POST with an empty, non-mutating payload returned
-  HTTP 404 for `https://testcrm.zoni.edu/apis/contactUs/channelUser/update`.
-  End-to-end CRM acceptance is blocked until the CRM team deploys/exposes the
-  endpoint. No synthetic contacts were submitted to testcrm during this probe.
-- After deployment, validate an approved phone-free contact on the sandbox
+- The update endpoint initially returned HTTP 404, then became available on
+  testcrm. A later profile-sync retry returned `success: true` for regular BSUID
+  `US.1354806593212850` on channel `d110c46c-1ea2-4a38-a070-d05337c80000`.
+  This confirms existing-user profile synchronization, not full phone-free
+  intake or live parent-BSUID messaging. No WhatsApp message was sent by that
+  synchronization test.
+- For remaining acceptance, validate an approved phone-free contact on the sandbox
   channel: accepted intake, parent/name/handle synchronization, same channel-user
   record, retry after forced synchronization failure, and a regular-BSUID reply.
   Never use Meta dashboard sample IDs as live message destinations.
 - Calling remains deferred: the reviewed CRM call service still requires a
   phone and creates fresh retry keys for call mutations.
+
+### Deferred PBX calling configuration: operator handoff
+
+The future operator runbook is
+[`docs/whatsapp-bsuid-calling.md`](../../../../asterisk-voice-agent-bridge/docs/whatsapp-bsuid-calling.md)
+in the sibling `asterisk-voice-agent-bridge` repository. Its local path is
+`/home/oscar/asterisk-voice-agent-bridge/docs/whatsapp-bsuid-calling.md`.
+It contains preflight commands, the required recording-aware deployment copy,
+backup/install/reload steps, attended acceptance, and rollback. Configuration
+changes and live calls require separate authorization and a maintenance window;
+the route has now been deployed under explicit user authorization; ongoing
+sandbox/CRM enablement remains deferred.
+
+Read-only PBX inspection on October 12, 2026 confirmed Asterisk 22.8.2,
+FreePBX 17.0.28, loaded base64/string modules, and the FreePBX include chain
+`from-internal` → `from-internal-xfer` → `from-internal-custom`. The named
+BSUID route and `/etc/asterisk/extensions_whatsapp_bsuid.conf` were absent.
+Extension 847 was registered and mapped in Frappe to `operez@zoni.edu`.
+The existing numeric WhatsApp route performs caller initialization and outbound
+recording checks; the future BSUID route must follow that recording policy
+using the local call ID as the destination label. The local dialplan asset now includes those steps. Five local contract checks
+and the mocked Frappe calling suites validated preparation. The installed
+Asterisk route and attended regular-BSUID call have now passed runtime acceptance. The artifact is
+prepared on bridge base revision `aebe9aad9f24a186226988337ce9144cf69c9a4c` with
+SHA-256 `d6efa083cc04f55b154ab48f1adf8100719f92f3c19a0256231fcbb78bbd57ff`.
+
+### October 13 dedicated-route deployment and acceptance
+
+The user authorized continuing with active production calls and confirmed that
+both participants were ready and agreed to recording. The BSUID route was
+installed and FreePBX reloaded with 18 active calls present. Backup:
+`/var/backups/asterisk/bsuid-20261013T151814Z`. The new file is
+`asterisk:asterisk`, mode `0644`; the custom include file's mode `0664` and
+existing contents were preserved, with exactly one BSUID include appended.
+Both route lookups succeeded. The numeric route was unchanged apart from
+regenerated source line numbers. FreePBX emitted a helper error for a quoted
+absolute-path scripter include already present in the backup; it was left
+unchanged, and both attended call tests passed.
+
+- BSUID call `ucuanuid0u`: account `18299477544`, agent `operez@zoni.edu`,
+  extension 847, exact regular BSUID, and **empty phone destination**.
+  The WhatsApp trunk answered at 15:20:22 UTC. The participant confirmed handset
+  ringing and two-way audio, then ended the call.
+- Recording: 23.4-second WAV with nonzero audio samples; filename uses the local
+  call ID rather than the BSUID. The runtime trace confirms caller and recording
+  subroutines executed before direct BSUID dialing.
+- Numeric regression `vnj49doevl`: existing numeric route, confirmed ringing and
+  two-way audio, plus a 25.84-second WAV with nonzero audio samples.
+- Both test channel groups ended. The sandbox BSUID destination was restored to
+  its prior disabled state; the PBX route remains installed. Ongoing enablement
+  is still a separate decision. No production Frappe settings, trunk credentials,
+  AMI permissions, or CRM source were changed.
+
+Frappe records remain `PBX Queued`, which represents AMI acceptance only. The
+answered calls are proven by PBX evidence and participant confirmation. Final
+`DIALSTATUS` and hangup cause were not captured, and terminal Frappe status
+correlation is a follow-up. Parent BSUIDs have local contract coverage but were
+not tested live. CRM phone-optional calling and stable retry-key work also
+remain deferred. See the PBX runbook for full evidence and rollback instructions.
+
 
 ## Reviewed compatibility baseline
 
