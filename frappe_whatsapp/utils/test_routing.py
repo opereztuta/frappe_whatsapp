@@ -20,6 +20,7 @@ from frappe_whatsapp.utils.routing import (
 )
 from frappe_whatsapp.utils.webhook import (
     _format_shared_contacts,
+    _handle_interactive,
     _process_incoming_message,
     get_media_file_extension,
     normalize_media_mime_type,
@@ -232,6 +233,35 @@ class TestRouting(FrappeTestCase):
                 "whatsapp_client_app": whatsapp_client_app,
             }
         ).insert(ignore_permissions=True)
+
+    def test_permission_summary_persists_automation_before_forwarding(self):
+        from frappe_whatsapp.utils.identity import resolve_identity
+        account = self._create_account()
+        profile = resolve_identity(
+            whatsapp_account=str(account.name),
+            identity={"user_id": "US.SyntheticPermission"},
+        )
+        for response in ("accept", "reject"):
+            with self.subTest(response=response), patch("frappe_whatsapp.utils.calling.handle_call_permission_reply"), patch("frappe_whatsapp.utils.webhook.forward_incoming_to_app_async") as forward:
+                message_id = "synthetic-permission-" + frappe.generate_hash(length=16)
+                message = {
+                    "id": message_id, "type": "interactive",
+                    "interactive": {"type": "call_permission_reply", "call_permission_reply": {"response": response}},
+                }
+                _handle_interactive(
+                    message=message, whatsapp_account=account,
+                    sender_profile_name=None, routed_app=None,
+                    reply_to_message_id=None, is_reply=False,
+                    identity_fields={"from_user_id": "US.SyntheticPermission", "contact_profile": profile.name},
+                )
+                forward.assert_called_once()
+                name = forward.call_args.kwargs["incoming_message_name"]
+                doc = _get_message_doc(name)
+                self.assertEqual(doc.is_automated_message, 1)
+                payload = serialize_incoming_message_for_forwarding(incoming_message_doc=doc)
+                self.assertIs(payload["is_automated_message"], True)
+                _process_incoming_message(message=message, whatsapp_account=account)
+                forward.assert_called_once()
 
     def test_serialize_incoming_message_for_forwarding_includes_profile_name(
         self,

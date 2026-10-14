@@ -1032,6 +1032,7 @@ def _handle_interactive(
             "reply_to_message_id": reply_to_message_id,
             "is_reply": is_reply,
             "content_type": "button",
+            "is_automated_message": 1,
             "profile_name": sender_profile_name,
             "whatsapp_account": whatsapp_account.name,
             "routed_app": routed_app,
@@ -1052,6 +1053,7 @@ def _handle_interactive(
             context_message_id=reply_to_message_id,
             message_doc_name=str(doc.name),
         )
+        forward_incoming_to_app_async(incoming_message_name=str(doc.name))
         return
 
     # button/list

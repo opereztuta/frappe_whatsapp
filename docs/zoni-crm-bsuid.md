@@ -18,6 +18,64 @@ events directly from `frappe_whatsapp`. Meta must remain subscribed only to
 This is a CRM-owned implementation. No `zoni_crm_service` source is changed by
 the Frappe BSUID work.
 
+## October 14, 2026 generated call-permission messages
+
+Local changes on Frappe `b937aef` and Zoni `2f28ec75` identify newly received
+call-permission summaries as automated. CRM source is unchanged: its current
+`apis/contactUs/lead/create` schema already accepts `isAutomatedMessage` and
+maps it to the stored message automation flag.
+
+| Layer | Field | Call-permission summary | Ordinary user message |
+| --- | --- | --- | --- |
+| WhatsApp Message | `is_automated_message` | Check value `1` | Default `0` |
+| Signed version-2 envelope | `message.is_automated_message` | JSON `true` | JSON `false` |
+| CRM intake request | `isAutomatedMessage` | JSON `true` | JSON `false` |
+
+Frappe sets the flag only when handling Meta's structured
+`interactive.type=call_permission_reply`. Both accepted and rejected summaries
+are automated, including permanent and temporary acceptance. The message text,
+identity, account, context and Meta message ID remain unchanged. Classification
+does not inspect display text or sender names: user-written text saying “Call
+permission accepted”, ordinary button replies, and list replies remain false.
+This marks the generated summary, even though the permission decision itself
+was made by the user.
+
+After successful permission handling, Frappe now enqueues inbound forwarding
+immediately instead of relying on recovery to discover the message. Existing
+Meta-message and outbox-event deduplication remain in place. The flag is stored
+before asynchronous forwarding, so reload and recovery retain it. No call is
+automatically originated by this change.
+
+Zoni maps the boolean from the incoming message to the top-level CRM field.
+Legacy envelopes lacking the flag default to false; truthy strings such as
+`"false"` do not enable it. Existing intake/profile-sync checkpoints and HMAC
+verification are unchanged. Stored outbox payloads and their hashes are not
+regenerated or rewritten.
+
+The sandbox WhatsApp Message schema is migrated. The new Check field is hidden,
+read-only, and defaults to zero; its controller annotation was generated with
+Frappe's `TypeExporter`. Deploy Zoni's backward-compatible mapping and Frappe's
+code/schema together through the normal migration and web/worker refresh
+process. Rollback must preserve the database field, queued payloads, hashes,
+and event checkpoints; reverting the mapping restores the previous unflagged
+CRM behavior for subsequent deliveries.
+
+Validation: 115 identity/message, routing/delivery, calling-webhook, Zoni
+webhook/adapter, and event-integrity tests passed on an isolated MariaDB site
+with external HTTP requests mocked or blocked. Added coverage verifies persisted
+accepted/rejected flags, temporary/permanent cases, immediate enqueue, identical
+user text remaining false, BSUID/parent/phone mappings, signed forwarding, and
+completed duplicate requests making no additional CRM calls. Targeted Pyright
+checks on the routing and related test files reported zero errors and warnings.
+The isolated site's timezone matched the sandbox; optional HRMS installation
+hooks were excluded. No acceptance message or call was sent to Meta or testcrm.
+
+This is future-only behavior. Lucia Vargas's existing CRM message and other
+historical messages were not reclassified, resent, or edited. Historical
+corrections require a separate CRM-supported workflow with source evidence.
+CRM, WhatsApp Chat, bridge/PBX configuration, Meta subscriptions, and production
+remain unchanged.
+
 ## October 13, 2026 critical integration hardening
 
 These changes are local and uncommitted on top of Frappe `14ad5bb` and Zoni

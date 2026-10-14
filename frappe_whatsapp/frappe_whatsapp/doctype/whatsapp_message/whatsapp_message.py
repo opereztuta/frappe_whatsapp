@@ -111,6 +111,7 @@ class WhatsAppMessage(Document):
         flow_token: DF.Data | None
         from_parent_user_id: DF.Data | None
         from_user_id: DF.Data | None
+        is_automated_message: DF.Check
         is_opt_in_request: DF.Check
         is_opt_out_request: DF.Check
         is_reply: DF.Check

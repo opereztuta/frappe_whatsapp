@@ -316,6 +316,7 @@ def serialize_incoming_message_for_forwarding(
         "profile_name": incoming_message_doc.get("profile_name"),
         "whatsapp_account": incoming_message_doc.whatsapp_account,
         "content_type": incoming_message_doc.content_type,
+        "is_automated_message": incoming_message_doc.get("is_automated_message") == 1,
         "is_voice_note": (
             1 if incoming_message_doc.get("content_type") == "audio"
             and incoming_message_doc.get("is_voice_note") else 0

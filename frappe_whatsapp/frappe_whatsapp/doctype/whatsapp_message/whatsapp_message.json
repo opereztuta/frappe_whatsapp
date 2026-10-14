@@ -31,6 +31,7 @@
   "message_id",
   "conversation_id",
   "content_type",
+  "is_automated_message",
   "is_voice_note",
   "attach",
   "buttons",
@@ -264,6 +265,14 @@
    "label": "Content Type",
    "options": "text\ndocument\nimage\nsticker\nvideo\naudio\nflow\nreaction\nlocation\ncontact\ncontact_request\nbutton\ninteractive",
    "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_automated_message",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Automated Message",
+   "read_only": 1
   },
   {
    "default": "0",
