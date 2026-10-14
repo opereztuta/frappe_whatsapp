@@ -14,11 +14,13 @@ from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message i
 from frappe_whatsapp.utils.routing import (
     forward_incoming_to_app,
     forward_incoming_to_app_async,
+    recover_unqueued_incoming_events,
     resolve_incoming_routed_app,
     serialize_incoming_message_for_forwarding,
 )
 from frappe_whatsapp.utils.webhook import (
     _format_shared_contacts,
+    _handle_interactive,
     _process_incoming_message,
     get_media_file_extension,
     normalize_media_mime_type,
@@ -35,6 +37,60 @@ def _get_message_doc(name: Any) -> WhatsAppMessage:
 
 
 class TestRouting(FrappeTestCase):
+    def test_recovery_can_be_scoped_to_one_app(self):
+        with patch("frappe_whatsapp.utils.routing.frappe.db.has_column", return_value=True), patch("frappe_whatsapp.utils.routing.frappe.get_all", return_value=[]) as rows:
+            recover_unqueued_incoming_events(client_app="crm-only")
+        self.assertEqual(rows.call_args.kwargs["filters"]["routed_app"], "crm-only")
+
+    @patch(
+        "frappe_whatsapp.utils.routing.forward_incoming_to_app_by_name"
+    )
+    @patch("frappe_whatsapp.utils.routing.frappe.get_all")
+    @patch("frappe_whatsapp.utils.routing.frappe.db.has_column")
+    def test_recover_unqueued_incoming_events_waits_for_media(
+        self,
+        mock_has_column,
+        mock_get_all,
+        mock_forward,
+    ):
+        mock_has_column.return_value = True
+        mock_get_all.return_value = [
+            frappe._dict({
+                "name": "MSG-TEXT",
+                "content_type": "text",
+                "attach": None,
+            }),
+            frappe._dict({
+                "name": "MSG-MEDIA-PENDING",
+                "content_type": "image",
+                "attach": None,
+            }),
+            frappe._dict({
+                "name": "MSG-MEDIA-READY",
+                "content_type": "image",
+                "attach": "/private/files/photo.jpg",
+            }),
+        ]
+
+        recover_unqueued_incoming_events()
+
+        self.assertEqual(
+            [call.kwargs["incoming_message_name"]
+             for call in mock_forward.call_args_list],
+            ["MSG-TEXT", "MSG-MEDIA-READY"],
+        )
+        mock_get_all.assert_called_once_with(
+            "WhatsApp Message",
+            filters={
+                "type": "Incoming",
+                "client_event_queued": 0,
+                "routed_app": ["is", "set"],
+            },
+            fields=["name", "content_type", "attach"],
+            order_by="creation asc",
+            limit=100,
+        )
+
     def test_forward_queue_handles_missing_and_available_referral_column(self):
         for has_column, source_type, expected_queue in (
             (False, None, "short"),
@@ -133,8 +189,15 @@ class TestRouting(FrappeTestCase):
             "WhatsApp Message", {"message_id": text_id}, "name",
         )
         self.assertTrue(message_name)
-        route.assert_called_once_with(
-            whatsapp_account=account.name, contact_number="15551230001",
+        route.assert_called_once()
+        route_kwargs = route.call_args.kwargs
+        self.assertEqual(route_kwargs["whatsapp_account"], account.name)
+        self.assertEqual(route_kwargs["contact_number"], "15551230001")
+        self.assertEqual(
+            route_kwargs["contact_profile"],
+            frappe.db.get_value(
+                "WhatsApp Message", message_name, "contact_profile"
+            ),
         )
         consent.assert_called_once()
         language.assert_called_once()
@@ -170,6 +233,35 @@ class TestRouting(FrappeTestCase):
                 "whatsapp_client_app": whatsapp_client_app,
             }
         ).insert(ignore_permissions=True)
+
+    def test_permission_summary_persists_automation_before_forwarding(self):
+        from frappe_whatsapp.utils.identity import resolve_identity
+        account = self._create_account()
+        profile = resolve_identity(
+            whatsapp_account=str(account.name),
+            identity={"user_id": "US.SyntheticPermission"},
+        )
+        for response in ("accept", "reject"):
+            with self.subTest(response=response), patch("frappe_whatsapp.utils.calling.handle_call_permission_reply"), patch("frappe_whatsapp.utils.webhook.forward_incoming_to_app_async") as forward:
+                message_id = "synthetic-permission-" + frappe.generate_hash(length=16)
+                message = {
+                    "id": message_id, "type": "interactive",
+                    "interactive": {"type": "call_permission_reply", "call_permission_reply": {"response": response}},
+                }
+                _handle_interactive(
+                    message=message, whatsapp_account=account,
+                    sender_profile_name=None, routed_app=None,
+                    reply_to_message_id=None, is_reply=False,
+                    identity_fields={"from_user_id": "US.SyntheticPermission", "contact_profile": profile.name},
+                )
+                forward.assert_called_once()
+                name = forward.call_args.kwargs["incoming_message_name"]
+                doc = _get_message_doc(name)
+                self.assertEqual(doc.is_automated_message, 1)
+                payload = serialize_incoming_message_for_forwarding(incoming_message_doc=doc)
+                self.assertIs(payload["is_automated_message"], True)
+                _process_incoming_message(message=message, whatsapp_account=account)
+                forward.assert_called_once()
 
     def test_serialize_incoming_message_for_forwarding_includes_profile_name(
         self,
@@ -335,22 +427,16 @@ class TestRouting(FrappeTestCase):
             "Shared contact\n\nName: Unnamed contact",
         )
 
-    @patch("frappe_whatsapp.utils.routing._mark_incoming_message_forwarded")
-    @patch("frappe_whatsapp.utils.routing.make_post_request")
-    @patch(
-        "frappe_whatsapp.utils.routing._incoming_message_already_forwarded",
-        return_value=False,
-    )
+    @patch("frappe_whatsapp.utils.client_delivery.queue_client_event")
     @patch("frappe_whatsapp.utils.routing.frappe.get_doc")
-    def test_forward_incoming_to_app_posts_profile_name_in_payload(
+    def test_forward_incoming_to_app_queues_profile_name_in_payload(
         self,
         mock_get_doc,
-        _mock_already_forwarded,
-        mock_make_post_request,
-        _mock_mark_forwarded,
+        mock_queue_client_event,
     ):
         mock_get_doc.return_value = frappe._dict(
             {
+                "name": "Test Client App",
                 "enabled": 1,
                 "inbound_webhook_url": "https://example.com/incoming",
                 "app_id": "client-app-1",
@@ -375,9 +461,10 @@ class TestRouting(FrappeTestCase):
 
         forward_incoming_to_app(incoming_message_doc=incoming_message_doc)
 
-        self.assertTrue(mock_make_post_request.called)
-        payload = json.loads(mock_make_post_request.call_args.kwargs["data"])
-        self.assertEqual(payload["event"], "whatsapp.incoming")
+        mock_queue_client_event.assert_called_once()
+        queue_kwargs = mock_queue_client_event.call_args.kwargs
+        self.assertEqual(queue_kwargs["event_type"], "whatsapp.incoming")
+        payload = queue_kwargs["payload"]
         self.assertEqual(payload["message"]["profile_name"], "Jane Sender")
         self.assertEqual(payload["message"]["whatsapp_account"], "Test Account")
 
@@ -402,17 +489,10 @@ class TestRouting(FrappeTestCase):
         self.assertFalse(route.last_outgoing_message)
         self.assertFalse(route.last_outgoing_at)
 
-    @patch("frappe_whatsapp.utils.routing._mark_incoming_message_forwarded")
-    @patch("frappe_whatsapp.utils.routing.make_post_request")
-    @patch(
-        "frappe_whatsapp.utils.routing._incoming_message_already_forwarded",
-        return_value=False,
-    )
+    @patch("frappe_whatsapp.utils.client_delivery.queue_client_event")
     def test_forward_incoming_to_app_uses_account_default_app_when_unrouted(
         self,
-        _mock_already_forwarded,
-        mock_make_post_request,
-        _mock_mark_forwarded,
+        mock_queue_client_event,
     ):
         app = self._create_client_app()
         account = self._create_account(whatsapp_client_app=app.name)
@@ -435,7 +515,7 @@ class TestRouting(FrappeTestCase):
 
         forward_incoming_to_app(incoming_message_doc=incoming_message_doc)
 
-        self.assertTrue(mock_make_post_request.called)
+        mock_queue_client_event.assert_called_once()
         route = cast(
             WhatsAppConversationRoute,
             frappe.get_doc(

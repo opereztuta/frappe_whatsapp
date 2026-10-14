@@ -18,6 +18,12 @@ class TestCRMCallingAPI(FrappeTestCase):
         )
         self.role_patch.start()
         self.addCleanup(self.role_patch.stop)
+        self.account_patch = patch(
+            "frappe_whatsapp.frappe_whatsapp.api.calling.frappe.get_all",
+            return_value=[{"name": "allowed-account"}],
+        )
+        self.mock_allowed_accounts = self.account_patch.start()
+        self.addCleanup(self.account_patch.stop)
 
     @staticmethod
     def _db_value(doctype, _filters, fieldname=None, *args, **kwargs):
@@ -55,6 +61,7 @@ class TestCRMCallingAPI(FrappeTestCase):
         self.assertEqual(result["agent_extension"], "9876")
         mock_state.assert_called_once_with(
             phone_number="15551234567",
+            recipient="",
             agent_extension="9876",
             whatsapp_account="account-a",
         )
@@ -120,8 +127,7 @@ class TestCRMCallingAPI(FrappeTestCase):
         self.assertNotIn("agent_user", mock_request.call_args.kwargs)
 
     @patch(
-        "frappe_whatsapp.frappe_whatsapp.api.calling."
-        "request_service_call_permission"
+        "frappe_whatsapp.frappe_whatsapp.api.calling." "request_service_call_permission"
     )
     @patch("frappe_whatsapp.frappe_whatsapp.api.calling.frappe.db.get_value")
     def test_invalid_language_is_rejected_before_database_or_service(
@@ -166,6 +172,46 @@ class TestCRMCallingAPI(FrappeTestCase):
         self.assertEqual(result["status"], "pbx_queued")
         self.assertEqual(result["call_id"], "CALL-2")
         self.assertFalse(result["can_start_call"])
+
+    @patch("frappe_whatsapp.frappe_whatsapp.api.calling.start_service_outbound_call")
+    @patch("frappe_whatsapp.frappe_whatsapp.api.calling.frappe.db.get_value")
+    def test_bsuid_calls_keep_phone_empty(self, mock_get_value, mock_start):
+        mock_get_value.side_effect = self._db_value
+        mock_start.return_value = {
+            "ok": True,
+            "status": "PBX Queued",
+            "call": "CALL-BSUID",
+        }
+        for recipient in ("US.AbCd1234", "US.ENT.AbCd1234"):
+            with self.subTest(recipient=recipient):
+                mock_start.reset_mock()
+                result = start_outbound_call(
+                    whatsapp_account="account-a",
+                    agent_extension="847",
+                    source_app="crm-app",
+                    recipient=recipient,
+                    idempotency_key="bsuid-call-test-1234",
+                )
+                self.assertEqual(result["status"], "pbx_queued")
+                self.assertFalse(mock_start.call_args.kwargs["phone_number"])
+                self.assertEqual(mock_start.call_args.kwargs["recipient"], recipient)
+                self.assertEqual(mock_start.call_args.kwargs["agent_extension"], "847")
+                self.assertEqual(mock_start.call_count, 1)
+
+    @patch("frappe_whatsapp.frappe_whatsapp.api.calling.start_service_outbound_call")
+    @patch("frappe_whatsapp.frappe_whatsapp.api.calling.frappe.db.get_value")
+    def test_account_outside_client_app_is_rejected(self, mock_get_value, mock_start):
+        mock_get_value.side_effect = self._db_value
+        self.mock_allowed_accounts.return_value = []
+        with self.assertRaises(frappe.PermissionError):
+            start_outbound_call(
+                whatsapp_account="account-a",
+                agent_extension="847",
+                source_app="crm-app",
+                recipient="US.AbCd1234",
+                idempotency_key="bsuid-rejected-test-1234",
+            )
+        mock_start.assert_not_called()
 
     @patch(
         "frappe_whatsapp.frappe_whatsapp.api.calling.frappe.get_roles",
