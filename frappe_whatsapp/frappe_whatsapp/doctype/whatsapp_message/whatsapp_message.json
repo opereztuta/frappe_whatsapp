@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
- "creation": "2026-10-02 15:08:23.603733",
+ "creation": "2026-10-14 10:55:36.558540",
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
@@ -664,7 +664,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-09 11:08:08.296189",
+ "modified": "2026-10-14 11:13:28.679921",
  "modified_by": "Administrator",
  "module": "Frappe Whatsapp",
  "name": "WhatsApp Message",
