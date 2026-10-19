@@ -532,6 +532,63 @@ def _get_idempotent_call(
     return call_doc
 
 
+def _find_permission(
+    *,
+    whatsapp_account: str,
+    phone_number: str = "",
+    recipient: str = "",
+    contact_profile: str | None = None,
+    for_update: bool = False,
+) -> WhatsAppCallPermission | None:
+    """Resolve legacy and profile identities without hiding conflicting rows.
+
+    Recovery uses locking reads so MariaDB's repeatable-read snapshot cannot
+    hide a competing insert that committed after our initial lookup.
+    """
+    number = _normalize_phone_number(phone_number)
+    identities = {
+        "contact_profile": contact_profile,
+        "phone_number": number,
+        "recipient": recipient,
+    }
+    if not any(identities.values()):
+        frappe.throw(_("A phone number, recipient or profile is required."))
+    selectors = [(key, value) for key, value in identities.items() if value]
+    if number:
+        selectors.append(("name", f"{number}-{whatsapp_account}"))
+    matches: set[str] = set()
+    for field, value in selectors:
+        matches.update(
+            row.name
+            for row in frappe.db.get_values(
+                "WhatsApp Call Permission",
+                {"whatsapp_account": whatsapp_account, field: value},
+                ["name"],
+                as_dict=True,
+                for_update=for_update,
+            )
+        )
+    if len(matches) > 1:
+        frappe.throw(
+            _("Conflicting WhatsApp call-permission records for this identity.")
+        )
+    if not matches:
+        return None
+    doc = cast(
+        "WhatsAppCallPermission",
+        frappe.get_doc(
+            "WhatsApp Call Permission", matches.pop(), for_update=for_update
+        ),
+    )
+    for field, value in identities.items():
+        stored = doc.get(field)
+        if field == "phone_number":
+            stored = _normalize_phone_number(stored)
+        if value and stored and value != stored:
+            frappe.throw(_("Conflicting WhatsApp call-permission identity."))
+    return doc
+
+
 def _upsert_permission(
     *,
     whatsapp_account: str,
@@ -543,21 +600,15 @@ def _upsert_permission(
     last_request_message: str | None = None,
 ) -> WhatsAppCallPermission:
     number = _normalize_phone_number(phone_number)
-    filters: dict[str, Any] = {"whatsapp_account": whatsapp_account}
-    filters["contact_profile" if contact_profile else (
-        "phone_number" if number else "recipient"
-    )] = contact_profile or number or recipient
-    existing = frappe.db.get_value(
-        "WhatsApp Call Permission",
-        filters,
-        "name",
+    identity = dict(
+        whatsapp_account=whatsapp_account,
+        phone_number=number,
+        recipient=recipient,
+        contact_profile=contact_profile,
     )
-    if existing:
-        doc = cast(
-            "WhatsAppCallPermission",
-            frappe.get_doc("WhatsApp Call Permission", str(existing)),
-        )
-    else:
+    doc = _find_permission(**identity)
+    existing = doc is not None
+    if doc is None:
         doc = cast(
             "WhatsAppCallPermission",
             frappe.new_doc("WhatsApp Call Permission"),
@@ -566,9 +617,57 @@ def _upsert_permission(
         doc.phone_number = number or None
         doc.recipient = recipient or None
         doc.contact_profile = contact_profile
-        if number:
-            doc.name = f"{number}-{whatsapp_account}"
 
+    def apply_state(doc: WhatsAppCallPermission) -> None:
+        _apply_permission_state(
+            doc,
+            number=number,
+            recipient=recipient,
+            contact_profile=contact_profile,
+            state=state,
+            last_requested_at=last_requested_at,
+            last_request_message=last_request_message,
+        )
+
+    if existing:
+        # Reload under a row lock before applying state and preserving history.
+        doc = _find_permission(**identity, for_update=True)
+        assert doc is not None
+        apply_state(doc)
+        doc.save(ignore_permissions=True)
+        return doc
+
+    apply_state(doc)
+    savepoint = "permission_insert_" + frappe.generate_hash(length=10)
+    frappe.db.savepoint(savepoint)
+    message_count = len(frappe.local.message_log)
+    try:
+        doc.insert(ignore_permissions=True)
+    except frappe.DuplicateEntryError:
+        frappe.db.rollback(save_point=savepoint)
+        winner = _find_permission(**identity, for_update=True)
+        if winner is None:
+            raise
+        # The recovered collision must not display a stale "already exists"
+        # error in an otherwise successful API response.
+        del frappe.local.message_log[message_count:]
+        apply_state(winner)
+        winner.save(ignore_permissions=True)
+        doc = winner
+    frappe.db.release_savepoint(savepoint)
+    return doc
+
+
+def _apply_permission_state(
+    doc: WhatsAppCallPermission,
+    *,
+    number: str,
+    recipient: str,
+    contact_profile: str | None,
+    state: dict[str, Any],
+    last_requested_at: datetime | None,
+    last_request_message: str | None,
+) -> None:
     raw_status = str(state.get("permission_status") or "Unknown")
     if number:
         doc.phone_number = number
@@ -592,34 +691,21 @@ def _upsert_permission(
         doc.last_request_message = last_request_message
     doc.raw_meta_state = _json(state.get("raw_meta_state") or {})
 
-    if existing:
-        doc.save(ignore_permissions=True)
-    else:
-        doc.insert(ignore_permissions=True)
-    return doc
-
 
 def get_local_permission(
-    phone_number: str, whatsapp_account: str, recipient: str = "",
+    phone_number: str,
+    whatsapp_account: str,
+    recipient: str = "",
     contact_profile: str | None = None,
 ) -> WhatsAppCallPermission | None:
-    number = _normalize_phone_number(phone_number)
-    filters: dict[str, Any] = {"whatsapp_account": whatsapp_account}
-    filters["contact_profile" if contact_profile else (
-        "phone_number" if number else "recipient"
-    )] = contact_profile or number or recipient
-    existing = frappe.db.get_value(
-        "WhatsApp Call Permission",
-        filters,
-        "name",
+    doc = _find_permission(
+        whatsapp_account=whatsapp_account,
+        phone_number=phone_number,
+        recipient=recipient,
+        contact_profile=contact_profile,
     )
-    if not existing:
+    if doc is None:
         return None
-
-    doc = cast(
-        "WhatsAppCallPermission",
-        frappe.get_doc("WhatsApp Call Permission", str(existing)),
-    )
     if doc.permission_status == "Temporary" and doc.expires_at:
         expires_at = get_datetime(doc.expires_at)
         if expires_at and expires_at <= now_datetime():

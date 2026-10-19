@@ -1,6 +1,5 @@
 {
  "actions": [],
- "autoname": "hash",
  "creation": "2026-07-01 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -99,11 +98,11 @@
  ],
  "grid_page_length": 50,
  "links": [],
- "modified": "2026-10-01 16:25:24.568139",
+ "modified": "2026-10-19 15:06:34.314561",
  "modified_by": "Administrator",
  "module": "Frappe Whatsapp",
  "name": "WhatsApp Call Permission",
- "naming_rule": "Expression",
+ "naming_rule": "By script",
  "owner": "Administrator",
  "permissions": [
   {
