@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+
 from frappe.model.document import Document
 import frappe
+
+from frappe_whatsapp.utils.identity import normalize_phone
 
 
 class WhatsAppCallPermission(Document):
@@ -28,8 +32,15 @@ class WhatsAppCallPermission(Document):
     # end: auto-generated types
 
     def autoname(self):
+        self.phone_number = normalize_phone(self.phone_number) or None
         if self.phone_number:
             self.name = f"{self.phone_number}-{self.whatsapp_account}"
+        elif self.recipient:
+            key = f"{self.whatsapp_account}\0{self.recipient}"
+            self.name = (
+                "recipient-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+            )
         else:
-            self.name = frappe.generate_hash(length=20)
-    pass
+            frappe.throw(
+                "A phone number or recipient is required for a call permission."
+            )
